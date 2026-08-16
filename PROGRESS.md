@@ -25,10 +25,16 @@
   - 例: `https://raw.githubusercontent.com/ko4hikari/ig-story-auto/main/assets/open/01.jpg`
 - `IMAGE_BASE_URL` は `https://raw.githubusercontent.com/ko4hikari/ig-story-auto/main`（末尾スラッシュなし）で確定
 
+### promo 画像の本番差し替え
+- ダミー画像（`01.jpg`, `02.jpg`）を削除し、本番用3枚に差し替え済み
+  - `01_yoru.jpg` → `02_chinsuko.jpg` → `03_fruit_shisha.jpg` の順（追加順）で投稿される
+  - 解像度は1080×1920（9:16）ではなく853×1844 / 1078×1518 / 1114×1470。投稿自体は可能だが、Instagram側でレターボックスが入る可能性あり（未確認・要実機チェック）
+- raw URLで3枚とも表示確認済み
+
 ## 次にやること
 
 ### ③ 残タスク
-3. `assets/` のダミー画像を本番用（1080×1920、8MB以下、半角英数字のファイル名）に差し替え、再度 raw URL で表示確認
+- `open` フォルダのダミー画像（`assets/open/01.jpg`, `02.jpg`）はまだ差し替えていない。本番用画像を用意して同様に差し替え、raw URLで確認する
 
 ### ④ Instagram / Metaトークン
 `README.md` §1 の手順。長期トークン（60日）を取得して `IG_ACCESS_TOKEN` に設定。
