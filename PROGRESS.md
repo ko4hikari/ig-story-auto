@@ -18,16 +18,17 @@
   - 休業行に `closed_days.txt:N` の行番号が出る
   - 取得成功時に `closed_days.txt` へキャッシュが書き込まれる
 
+### ③ GitHubリポジトリと画像公開（1・2・4のみ完了）
+- GitHub CLI 認証済み（アカウント: `ko4hikari`）
+- public リポジトリ `https://github.com/ko4hikari/ig-story-auto` を作成し、`main` ブランチに初回コミットを push 済み
+- raw URL（4画像すべて）で `HTTP 200` / `Content-Type: image/jpeg` を確認済み（現状はダミー画像のため各39バイト）
+  - 例: `https://raw.githubusercontent.com/ko4hikari/ig-story-auto/main/assets/open/01.jpg`
+- `IMAGE_BASE_URL` は `https://raw.githubusercontent.com/ko4hikari/ig-story-auto/main`（末尾スラッシュなし）で確定
+
 ## 次にやること
 
-### ③ GitHubリポジトリと画像公開
-現状: git初期化済み（`master`、コミット0件）。GitHub CLI（`gh`）は未インストール。
-
-1. GitHubに **public** リポジトリを作成（Instagramが認証なしで画像を取得する必要があるため）
-2. 初回コミットして push
-3. `assets/` のダミー画像を本番用（1080×1920、8MB以下、半角英数字のファイル名）に差し替え
-4. raw URL をブラウザで開き、画像が表示されることを確認
-5. `IMAGE_BASE_URL` を確定（例: `https://raw.githubusercontent.com/{user}/{repo}/main`、末尾スラッシュなし）
+### ③ 残タスク
+3. `assets/` のダミー画像を本番用（1080×1920、8MB以下、半角英数字のファイル名）に差し替え、再度 raw URL で表示確認
 
 ### ④ Instagram / Metaトークン
 `README.md` §1 の手順。長期トークン（60日）を取得して `IG_ACCESS_TOKEN` に設定。
