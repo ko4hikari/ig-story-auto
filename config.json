@@ -1,0 +1,19 @@
+{
+  "slots": [
+    {
+      "name": "open",
+      "folder": "assets/open",
+      "mode": "rotate",
+      "time_jst": "18:00",
+      "respect_closed_days": true
+    },
+    {
+      "name": "promo",
+      "folder": "assets/promo",
+      "mode": "all",
+      "time_jst": "12:00",
+      "interval_seconds": 30,
+      "respect_closed_days": false
+    }
+  ]
+}

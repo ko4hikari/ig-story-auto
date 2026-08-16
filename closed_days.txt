@@ -1,0 +1,6 @@
+# closed_days.txt - auto-generated cache. Do not edit manually.
+# updated: 2026-08-16T13:08:57.218867+09:00
+PAUSE=false
+2026-08-17,open_only,
+2026-08-20,all,台風
+2026-09-01,open_only,棚卸
