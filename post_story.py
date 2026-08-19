@@ -6,7 +6,6 @@ import csv
 import io
 import json
 import os
-import subprocess
 import sys
 import time
 import urllib.parse
@@ -31,7 +30,9 @@ CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 CLOSED_DAYS_PATH = os.path.join(BASE_DIR, "closed_days.txt")
 
 IG_API_VERSION = os.environ.get("IG_API_VERSION") or "v23.0"
-IG_BASE = f"https://graph.instagram.com/{IG_API_VERSION}"
+# Facebookログイン方式（ページ経由）のInstagram APIを使用する。
+# エンドポイントは graph.facebook.com で、対象は "me" ではなく IG_USER_ID を明示する。
+IG_BASE = f"https://graph.facebook.com/{IG_API_VERSION}"
 
 RETRY_DELAYS = [5, 15, 45]  # 秒。指数バックオフ（最大3回リトライ = 計4回試行）
 CONTAINER_WAIT_SECONDS = 5
@@ -385,27 +386,31 @@ def _ig_params(token, **extra):
     return params
 
 
-def create_media_container(token, image_url):
+def create_media_container(token, ig_user_id, image_url):
     resp = _do_request(
         "POST",
-        f"{IG_BASE}/me/media",
+        f"{IG_BASE}/{ig_user_id}/media",
         params=_ig_params(token, image_url=image_url, media_type="STORIES"),
     )
     return resp.json()["id"]
 
 
-def publish_media(token, creation_id):
+def publish_media(token, ig_user_id, creation_id):
     resp = _do_request(
         "POST",
-        f"{IG_BASE}/me/media_publish",
+        f"{IG_BASE}/{ig_user_id}/media_publish",
         params=_ig_params(token, creation_id=creation_id),
     )
     return resp.json()
 
 
-def get_publishing_limit(token):
+def get_publishing_limit(token, ig_user_id):
     """24時間の移動窓での残投稿可能数を返す。判定不能なら None。"""
-    resp = _do_request("GET", f"{IG_BASE}/me/content_publishing_limit", params=_ig_params(token))
+    resp = _do_request(
+        "GET",
+        f"{IG_BASE}/{ig_user_id}/content_publishing_limit",
+        params=_ig_params(token, fields="quota_usage,config"),
+    )
     data = resp.json()
     entries = data.get("data") or [{}]
     entry = entries[0]
@@ -416,10 +421,10 @@ def get_publishing_limit(token):
     return max(total - usage, 0)
 
 
-def post_one_image(token, image_url):
+def post_one_image(token, ig_user_id, image_url):
     """1枚投稿する。戻り値: (ok, status, body)"""
     try:
-        creation_id = create_media_container(token, image_url)
+        creation_id = create_media_container(token, ig_user_id, image_url)
     except RequestFailure as e:
         return False, e.status_code, e.body
     except (requests.RequestException, KeyError, ValueError) as e:
@@ -428,7 +433,7 @@ def post_one_image(token, image_url):
     time.sleep(CONTAINER_WAIT_SECONDS)
 
     try:
-        publish_media(token, creation_id)
+        publish_media(token, ig_user_id, creation_id)
     except RequestFailure as e:
         return False, e.status_code, e.body
     except (requests.RequestException, KeyError, ValueError) as e:
@@ -514,8 +519,12 @@ def cmd_dry_run(slots, slot_name):
 def cmd_post(slots, slot_name):
     slot = get_slot(slots, slot_name)
     token = os.environ.get("IG_ACCESS_TOKEN", "")
+    ig_user_id = os.environ.get("IG_USER_ID", "")
     if not token:
         notify(f"[{slot_name}] IG_ACCESS_TOKEN が未設定です")
+        return 1
+    if not ig_user_id:
+        notify(f"[{slot_name}] IG_USER_ID が未設定です")
         return 1
 
     state = resolve_closed_days()
@@ -534,14 +543,14 @@ def cmd_post(slots, slot_name):
         return 1
 
     if slot["mode"] == "rotate":
-        return _post_rotate(slot_name, slot, images, today, token)
-    return _post_all(slot_name, slot, images, token)
+        return _post_rotate(slot_name, slot, images, today, token, ig_user_id)
+    return _post_all(slot_name, slot, images, token, ig_user_id)
 
 
-def _post_rotate(slot_name, slot, images, today, token):
+def _post_rotate(slot_name, slot, images, today, token, ig_user_id):
     fn = select_rotate_image(images, today)
     url = build_image_url(slot["folder"], fn)
-    ok, status, body = post_one_image(token, url)
+    ok, status, body = post_one_image(token, ig_user_id, url)
     if not ok:
         notify(f"[{slot_name}] 投稿失敗: {fn} status={status} body={body}")
         return 1
@@ -549,11 +558,11 @@ def _post_rotate(slot_name, slot, images, today, token):
     return 0
 
 
-def _post_all(slot_name, slot, images, token):
+def _post_all(slot_name, slot, images, token, ig_user_id):
     interval = slot.get("interval_seconds", 30)
 
     try:
-        remaining = get_publishing_limit(token)
+        remaining = get_publishing_limit(token, ig_user_id)
     except RequestFailure as e:
         notify(
             f"[{slot_name}] 投稿数上限の取得に失敗したため中止しました: "
@@ -578,7 +587,7 @@ def _post_all(slot_name, slot, images, token):
     failures = []  # (filename, status, body)
     for i, fn in enumerate(to_post):
         url = build_image_url(slot["folder"], fn)
-        ok, status, body = post_one_image(token, url)
+        ok, status, body = post_one_image(token, ig_user_id, url)
         if ok:
             successes.append(fn)
             log(f"[{slot_name}] 投稿成功: {fn}")
@@ -609,49 +618,37 @@ def _post_all(slot_name, slot, images, token):
 
 
 def cmd_refresh_token():
+    """アクセストークンの有効性を確認する。
+
+    Facebookログイン方式で発行した長期ページアクセストークンは、
+    ユーザーがパスワード変更やアプリ連携解除をしない限り実質無期限で失効しない
+    （Instagramログイン方式のような60日ごとの自動リフレッシュAPIが存在しない）。
+    そのため、ここでは定期的に有効性だけを確認し、無効化されていた場合に
+    Graph APIエクスプローラーからの手動再取得を促す通知を送る。
+    """
     token = os.environ.get("IG_ACCESS_TOKEN", "")
     if not token:
-        notify("トークンリフレッシュ失敗: IG_ACCESS_TOKEN が未設定です")
+        notify("トークン確認失敗: IG_ACCESS_TOKEN が未設定です")
         return 1
 
     try:
         resp = _do_request(
             "GET",
-            "https://graph.instagram.com/refresh_access_token",
-            params={"grant_type": "ig_refresh_token", "access_token": token},
+            "https://graph.facebook.com/me",
+            params={"access_token": token, "fields": "id,name"},
         )
-        new_token = resp.json()["access_token"]
+        data = resp.json()
     except RequestFailure as e:
-        notify(f"アクセストークンのリフレッシュに失敗しました: status={e.status_code} body={e.body}")
+        notify(
+            "アクセストークンが無効になっている可能性があります。Graph APIエクスプローラーから"
+            f"再取得し、IG_ACCESS_TOKEN を更新してください。status={e.status_code} body={e.body}"
+        )
         return 1
     except (requests.RequestException, KeyError, ValueError) as e:
-        notify(f"アクセストークンのリフレッシュに失敗しました: {e}")
+        notify(f"アクセストークンの有効性確認に失敗しました: {e}")
         return 1
 
-    register_secret(new_token)
-
-    repo = os.environ.get("GH_REPO") or os.environ.get("GITHUB_REPOSITORY")
-    cmd = ["gh", "secret", "set", "IG_ACCESS_TOKEN", "--body", new_token]
-    if repo:
-        cmd += ["--repo", repo]
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    except OSError as e:
-        notify(
-            "トークンはリフレッシュしましたが、GitHub Secretsへの書き戻しコマンド実行に"
-            f"失敗しました: {e}"
-        )
-        return 1
-
-    if result.returncode != 0:
-        notify(
-            "トークンはリフレッシュしましたが、GitHub Secretsへの書き戻しに失敗しました。"
-            f"60日後に投稿が止まるため至急対応してください。stderr={result.stderr}"
-        )
-        return 1
-
-    log("アクセストークンをリフレッシュし、GitHub Secretsを更新しました")
+    log(f"アクセストークンは有効です（対象: {data.get('name', 'unknown')}）")
     return 0
 
 
