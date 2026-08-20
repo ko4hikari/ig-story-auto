@@ -1,8 +1,8 @@
-name: Refresh IG Access Token
+name: Check IG Access Token
 
 on:
   schedule:
-    # 毎週月曜 12:00 JST = 03:00 UTC。トークンの有効期限(60日)に対して十分な頻度。
+    # 毎週月曜 12:00 JST = 03:00 UTC。トークン失効の早期検知が目的（自動更新はしない）。
     - cron: "0 3 * * 1"
   workflow_dispatch: {}
 
@@ -19,12 +19,11 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      # gh CLI は GitHub-hosted runner (ubuntu-latest) にプリインストール済み。
-      # GH_TOKEN / GH_REPO を渡すと `gh secret set` がそれを使って認証する。
-      - name: Refresh access token and update secret
+      # Facebookログイン方式のシステムユーザートークンは自動更新APIが存在しないため、
+      # ここでは有効性チェックのみ行い、無効化されていれば NOTIFY_WEBHOOK 経由で通知する。
+      # 失効時は Graph APIエクスプローラーから手動で再取得し、IG_ACCESS_TOKEN を更新する。
+      - name: Check access token validity
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-          GH_REPO: ${{ github.repository }}
         run: python post_story.py --refresh-token

@@ -6,32 +6,35 @@
 ```
 repo/
 ├── .github/workflows/
-│   ├── slot-open.yml        # open スロット（毎日18:00 JST 起動）
-│   ├── slot-promo.yml       # promo スロット（毎日12:00 JST 起動）
-│   └── refresh-token.yml    # 週1回、アクセストークンをリフレッシュ
+│   ├── slot-open.yml        # open スロット（毎日17:00 JST 起動）
+│   ├── slot-promo.yml       # promo スロット（毎日18:00 JST 起動）
+│   └── refresh-token.yml    # 週1回、アクセストークンの有効性を確認（自動更新はしない）
 ├── assets/
-│   ├── open/                # open スロットの画像（サンプルを2枚同梱）
-│   └── promo/                # promo スロットの画像（サンプルを2枚同梱）
+│   ├── open/                # open スロットの画像（本番画像7枚）
+│   └── promo/                # promo スロットの画像（本番画像3枚）
 ├── config.json               # スロット定義
 ├── closed_days.txt           # 休業日キャッシュ（自動更新・手で編集しない）
 ├── post_story.py
 └── SPEC.md
 ```
 
-同梱の `assets/open/*.jpg`, `assets/promo/*.jpg` はダミー（1x1ピクセル）です。実運用前に本物の画像に差し替えてください。
-
 ---
 
 ## 1. 事前準備（Instagram / Meta 側）
 
-1. Instagram アカウントを **プロアカウント（ビジネス）** に切り替える
-2. https://developers.facebook.com で開発者登録する
-3. アプリを新規作成し、プロダクトに **Instagram** を追加。ログイン方式は **Instagram Business Login** を選ぶ
-4. スコープに `instagram_business_basic` / `instagram_business_content_publish` を設定する
-5. 自分のアカウントを連携し、短期トークンを取得 → 長期トークン（60日）に交換する
-6. App Review は不要。自分が所有・管理するアカウントのみを対象とする場合は Standard Access で足りる
+**採用方式: Instagram API with Facebook Login**（`graph.facebook.com`、対象Instagramアカウントに**連携済みのFacebookページ**が必要）。
+「Instagram Login」方式（`graph.instagram.com`）は、開発者ロールやテスター招待周りの不具合が多く安定しなかったため不採用。
 
-取得した長期トークンは後述の `IG_ACCESS_TOKEN` シークレットに設定する。
+1. Instagram アカウントを **プロアカウント（ビジネス）** に切り替え、**Facebookページと連携**しておく（連携済みページは他用途（例: Meta広告）と共用でよい。**そのページを解除・削除しないこと**）
+2. https://developers.facebook.com で開発者登録し、アプリを新規作成する。プロダクトに **Instagram** と **Facebookログイン** を追加する
+3. [Meta Business Suite](https://business.facebook.com/latest/settings/system_users) の「システムユーザー」で、投稿専用の**システムユーザー**（人間のアカウントではないAPI専用アカウント）を作成する
+4. アプリの「ロール」設定で、そのシステムユーザーを**テスター**として追加する（数値IDで検索すること。ユーザー名検索は失敗しやすい）
+5. システムユーザーの「割り当てられたアセット」で、対象のFacebookページを割り当てる（権限は投稿に必要な「コンテンツ」があればよい）
+6. システムユーザーの詳細画面で「トークンを生成」→ 対象アプリを選択 → 有効期限「60日間」を選択 → 権限はデフォルトのまま生成
+7. 発行されたトークンは**画面に表示された直後にコピーし**、後述の `IG_ACCESS_TOKEN` シークレットに設定する（App Secretは一切不要な方式）
+8. 対象のInstagramビジネスアカウントID（`IG_USER_ID`）は [グラフAPIエクスプローラー](https://developers.facebook.com/tools/explorer/) で `GET /me/accounts` → 該当ページの `GET /{page-id}?fields=instagram_business_account` から確認できる
+
+App Review は不要。自分（自社）が所有・管理するページ・アカウントのみを対象とする場合は Standard Access で足りる。
 
 APIバージョンは `post_story.py` 冒頭の `IG_API_VERSION`（デフォルト `v23.0`）で管理している。Meta 公式ドキュメントで最新の安定版を確認し、古くなっていたら値を更新するか、環境変数 `IG_API_VERSION` で上書きすること。
 
@@ -67,23 +70,23 @@ CSVは日付情報のみなので公開しても実害は少ないが、URLを�
 
 | 名前 | 内容 |
 |---|---|
-| `IG_ACCESS_TOKEN` | 長期アクセストークン（60日で失効） |
+| `IG_ACCESS_TOKEN` | システムユーザーの長期ページアクセストークン（60日間有効。§1参照） |
+| `IG_USER_ID` | 投稿対象のInstagramビジネスアカウントID（数値） |
 | `IMAGE_BASE_URL` | raw URL のベース。末尾スラッシュなし。例: `https://raw.githubusercontent.com/{user}/{repo}/main` |
-| `GH_PAT` | Secrets 更新用の Personal Access Token（`repo` スコープ、`refresh-token.yml` が使用） |
 | `NOTIFY_WEBHOOK` | 失敗通知先（Discord または Slack の Incoming Webhook URL） |
 | `CLOSED_DAYS_CSV_URL` | 休業日シートの公開CSV URL |
 
 CLIから設定する場合:
 
 ```bash
-gh secret set IG_ACCESS_TOKEN
+gh secret set IG_ACCESS_TOKEN --body "取得したトークン"
+gh secret set IG_USER_ID --body "1784xxxxxxxxxxxx"
 gh secret set IMAGE_BASE_URL --body "https://raw.githubusercontent.com/USER/REPO/main"
-gh secret set GH_PAT
-gh secret set NOTIFY_WEBHOOK
-gh secret set CLOSED_DAYS_CSV_URL
+gh secret set NOTIFY_WEBHOOK --body "https://discord.com/api/webhooks/..."
+gh secret set CLOSED_DAYS_CSV_URL --body "https://docs.google.com/.../pub?output=csv"
 ```
 
-`GH_PAT` は https://github.com/settings/tokens で `repo` スコープを持つ Personal Access Token を発行して設定する（`refresh-token.yml` 内で `gh secret set IG_ACCESS_TOKEN` を実行するために必要）。
+**Windows PowerShellで設定する場合は `--body` を使うこと。** `Get-Clipboard | gh secret set NAME` のようにパイプで渡すと、PowerShellの既定エンコーディングにより値の先頭に見えないBOM文字が混入し、トークンやURLとして正しく認識されなくなる（実際にこの事故が起きて `IG_ACCESS_TOKEN` と `NOTIFY_WEBHOOK` が壊れたことがある）。`gh secret set NAME --body $value` の形式なら安全。
 
 **画像を公開raw URLで配信するため、リポジトリは public にする。** private リポジトリのraw URLは認証が必要で、Instagram側から取得できない。private にしたい場合は画像だけ別の公開ストレージ（S3など）に置き、`IMAGE_BASE_URL` をそちらに向けること。
 
@@ -98,14 +101,14 @@ gh secret set CLOSED_DAYS_CSV_URL
       "name": "open",
       "folder": "assets/open",
       "mode": "rotate",
-      "time_jst": "18:00",
+      "time_jst": "17:00",
       "respect_closed_days": true
     },
     {
       "name": "promo",
       "folder": "assets/promo",
       "mode": "all",
-      "time_jst": "12:00",
+      "time_jst": "18:00",
       "interval_seconds": 30,
       "respect_closed_days": false
     }
@@ -206,9 +209,9 @@ python post_story.py --slot promo
 
 ## 7. 投稿処理の仕組み
 
-- 採用API: **Instagram API with Instagram Login**（`graph.instagram.com`、Facebookページ連携不要）
-- コンテナ作成 (`POST /me/media`) → **5秒待機** → 公開 (`POST /me/media_publish`) の2ステップ
-- `all` モードは投稿前に `GET /me/content_publishing_limit` で24時間の残投稿可能数を確認する
+- 採用API: **Instagram API with Facebook Login**（`graph.facebook.com`、連携済みFacebookページ経由。対象は `me` ではなく `IG_USER_ID` を明示する）
+- コンテナ作成 (`POST /{IG_USER_ID}/media`) → **5秒待機** → 公開 (`POST /{IG_USER_ID}/media_publish`) の2ステップ
+- `all` モードは投稿前に `GET /{IG_USER_ID}/content_publishing_limit`（`fields=quota_usage,config` 指定必須。省略するとAPIが `config` を返さず判定不能になる）で24時間の残投稿可能数を確認する
   - 残量 ≧ 投稿予定枚数 → そのまま実行
   - 残量 < 投稿予定枚数 → 入る分だけ投稿し、残りはスキップして通知
   - 残量 0 → 投稿せず通知して終了
@@ -244,21 +247,21 @@ PAUSE=false
 
 ---
 
-## 9. アクセストークンのリフレッシュ
+## 9. アクセストークンの有効性チェック
 
-- 長期トークンの有効期限は60日
+Facebookログイン方式のシステムユーザートークンには、Instagram Login方式のような「60日ごとに自動延長するAPI」が存在しない。パスワード変更やアプリ連携解除をしない限り実質無期限で失効しないため、`refresh-token.yml` は**自動更新ではなく有効性チェックのみ**を行う。
+
 - `refresh-token.yml` が週1回、`python post_story.py --refresh-token` を実行する
-  1. `GET https://graph.instagram.com/refresh_access_token` で新しいトークンを取得
-  2. `gh secret set IG_ACCESS_TOKEN` で GitHub Secrets に書き戻す（`GH_PAT` を使って認証）
-- 書き戻しに失敗すると必ず通知される（無言で失敗すると60日後に全部止まるため）
-- トークンは最低1回使われていないとリフレッシュできない。長期休業明けは要注意
+  - `GET https://graph.facebook.com/me` にトークンを渡し、正常応答するか確認するだけ（書き換えは行わない）
+- トークンが無効化されていた場合は通知が飛ぶので、[Meta Business Suiteのシステムユーザーページ](https://business.facebook.com/latest/settings/system_users)から**新しいトークンを再発行**し、`IG_ACCESS_TOKEN` を手動で更新する（§1の手順6〜7と同じ）
+- 60日の有効期限が近づいても自動通知は来ないため、カレンダー等で更新時期をリマインドしておくことを推奨する
 
 ---
 
 ## 10. タイムゾーンと実行タイミング
 
 - GitHub Actions の cron は UTC。「今日」の判定は必ず JST (`Asia/Tokyo`) で行う（`datetime.now()` をそのまま使わない設計にしている）
-- 例: 18:00 JST → `0 9 * * *` / 12:00 JST → `0 3 * * *` / 22:00 JST → `0 13 * * *`
+- 例: 17:00 JST → `0 8 * * *` / 18:00 JST → `0 9 * * *` / 22:00 JST → `0 13 * * *`
 - GitHub Actions の scheduled workflow は混雑時に数分〜15分程度遅延することがある。分単位の正確さが要る場合は cron を早めに設定するか、遅延を許容すること
 - workflow はスロットごとに1ファイル（`slot-open.yml`, `slot-promo.yml`, ...）。まとめず分けているのは事故を防ぐため。各ファイルに `workflow_dispatch` を入れて手動実行できるようにしている
 
@@ -302,6 +305,7 @@ PAUSE=false
 ## 13. トラブルシューティング
 
 - **`--check` / `--dry-run` で `CLOSED_DAYS_CSV_URL is not set` と出る**: 環境変数（またはSecrets）を設定しているか確認する
-- **投稿が失敗し続ける**: 通知に含まれる HTTPステータスとレスポンスbodyを確認する。`190` はトークン失効・スコープ不足の可能性が高い
-- **60日後に投稿が止まった**: `refresh-token.yml` の実行履歴と通知を確認する。`GH_PAT` の期限切れ・スコープ不足が典型的な原因
+- **投稿が失敗し続ける**: 通知に含まれる HTTPステータスとレスポンスbodyを確認する。`190`（`Cannot parse access token` 等）はトークン失効・書式破損の可能性が高い。PowerShellでパイプ経由で `gh secret set` した場合はBOM混入を疑う（§3参照）。§1の手順で新しいトークンを再発行する
+- **60日後に投稿が止まった**: `IG_ACCESS_TOKEN` の期限切れが濃厚。§1の手順6〜7で新しいトークンを再発行し、`gh secret set IG_ACCESS_TOKEN --body "..."` で更新する
+- **投稿画像の左右（または上下）が切れる**: Instagramストーリーズの表示枠（9:16）と画像の比率が合っていない。1080×1920に、はみ出す方向をぼかし背景で埋めた画像に差し替える
 - **休業日が反映されない**: シートの「ウェブに公開」設定が解除されていないか、B列の値が `オープンのみ停止` / `全停止` の表記と完全一致しているか確認する

@@ -6,58 +6,57 @@
 
 ### ① コード整備
 - `_parse_sheet_date()` にゼロ埋めなし日付（`2026/8/17`）のパースを追加
-- `assets/open/`, `assets/promo/` にダミー画像を2枚ずつ配置（**実運用前に差し替えが必要**）
 - `--check` / `--dry-run` がローカルで動作することを確認
+- Instagram APIを **Facebookログイン方式**（`graph.facebook.com` + `IG_USER_ID`）に切り替え済み（詳細はREADME §1・§7）
+- `content_publishing_limit` 取得時に `fields=quota_usage,config` を明示するよう修正（省略すると判定不能になるバグを修正済み）
 
 ### ② Googleスプレッドシート連携
 - 休業日シートを作成し、B列プルダウン（`オープンのみ停止` / `全停止`）を設定済み
-- 「ウェブに公開」でCSV URLを取得済み（値は Secrets `CLOSED_DAYS_CSV_URL` に入れる。リポジトリには書かない）
-- 実URLに対して `--check` を実行し、以下を確認
-  - `オープンのみ停止` の日は `open` のみ休業、`promo` は投稿予定のまま
-  - `全停止` の日は両スロットとも休業し、メモも表示される
-  - 休業行に `closed_days.txt:N` の行番号が出る
-  - 取得成功時に `closed_days.txt` へキャッシュが書き込まれる
+- A列（日付）に「有効な日付」のデータ入力規則を設定し、カレンダーピッカーで選択できるようにした（手入力も可能）
+- 「ウェブに公開」でCSV URLを取得し、Secrets `CLOSED_DAYS_CSV_URL` に設定・動作確認済み
+  - `オープンのみ停止` / `全停止` の挙動、`closed_days.txt:N` 表示、キャッシュ書き込みを確認済み
 
-### ③ GitHubリポジトリと画像公開（1・2・4のみ完了）
-- GitHub CLI 認証済み（アカウント: `ko4hikari`）
-- public リポジトリ `https://github.com/ko4hikari/ig-story-auto` を作成し、`main` ブランチに初回コミットを push 済み
-- raw URL（4画像すべて）で `HTTP 200` / `Content-Type: image/jpeg` を確認済み（現状はダミー画像のため各39バイト）
-  - 例: `https://raw.githubusercontent.com/ko4hikari/ig-story-auto/main/assets/open/01.jpg`
-- `IMAGE_BASE_URL` は `https://raw.githubusercontent.com/ko4hikari/ig-story-auto/main`（末尾スラッシュなし）で確定
+### ③ GitHubリポジトリと画像公開
+- public リポジトリ `https://github.com/ko4hikari/ig-story-auto` に push 済み
+- `open`（7枚）・`promo`（3枚）とも本番画像に差し替え済み
+- promo画像はアスペクト比不一致によるクロップ問題を修正し、1080×1920（9:16、ぼかし背景での余白埋め）に統一済み
+- `IMAGE_BASE_URL` は `https://raw.githubusercontent.com/ko4hikari/ig-story-auto/main`
 
-### promo 画像の本番差し替え
-- ダミー画像（`01.jpg`, `02.jpg`）を削除し、本番用3枚に差し替え済み
-  - `01_yoru.jpg` → `02_chinsuko.jpg` → `03_fruit_shisha.jpg` の順（追加順）で投稿される
-  - 解像度は1080×1920（9:16）ではなく853×1844 / 1078×1518 / 1114×1470。投稿自体は可能だが、Instagram側でレターボックスが入る可能性あり（未確認・要実機チェック）
-- raw URLで3枚とも表示確認済み
+### ④ Instagram / Metaトークン
+- Meta Business Suiteでシステムユーザー `igstoryautobot`（ID: `61593695151359`）を作成
+- Facebookページ（メタ広告と共用、解除不可）をシステムユーザーに割り当て済み
+- システムユーザートークン（60日有効）を発行し `IG_ACCESS_TOKEN` に設定
+- `IG_USER_ID`（`17841477742242047`）を確認・設定済み
+- **既知の事故と対処**: PowerShellで `Get-Clipboard | gh secret set` のようにパイプ経由で設定すると、値の先頭にBOM文字が混入し壊れることが判明（`IG_ACCESS_TOKEN` と `NOTIFY_WEBHOOK` の両方で発生）。以後は `gh secret set NAME --body $value` 形式に統一
 
-### open 画像の本番差し替え
-- ダミー画像（`01.jpg`, `02.jpg`）を削除し、本番用7枚（`S__212557827_0.jpg`〜`S__212557833_0.jpg`）に差し替え済み
-  - 960×1706（9:16相当、比率0.5627）で理想的な比率。ファイル名も半角英数字のためリネーム不要
-  - `rotate` モードなので投稿順は日付依存（並び順そのものは意味を持たない）
-- raw URLで7枚とも `HTTP 200` を確認済み
+### ⑤ GitHub Actions 手動実行
+- `NOTIFY_WEBHOOK` にDiscord Webhook URLを設定し、テスト通知の送信成功を確認
+- `workflow_dispatch` で `Slot - promo` を実行し、3枚の本番投稿・CI全体の流れが正常動作することを確認済み（実行ID: `32320207821`）
+
+### ⑥ トークンの有効性チェック
+- `refresh-token.yml` を実態（自動リフレッシュAPIが存在しないため、有効性チェックのみ行う設計）に合わせて更新済み
+- 旧設計で使っていた `GH_PAT` は不要になったため撤去済み
+
+### ⑦ 投稿時刻の確定
+- `open` = 17:00 JST（cron: `0 8 * * *`）
+- `promo` = 18:00 JST（cron: `0 9 * * *`）
+- `config.json` と両workflowファイルに反映・push済み
 
 ## 次にやること
 
-### ③ 完了
-GitHubリポジトリ作成・push・raw URL公開・open/promo両方の本番画像差し替えまで完了。
+現時点で大きな残タスクなし。運用しながら以下を随時確認する。
 
-### ④ Instagram / Metaトークン
-`README.md` §1 の手順。長期トークン（60日）を取得して `IG_ACCESS_TOKEN` に設定。
-
-### ⑤ GitHub Actions 手動実行
-Secrets を設定し、`workflow_dispatch` で `Slot - promo` を実行。投稿・`closed_days.txt` の自動コミット・通知を確認。
-
-### ⑥ トークンリフレッシュ
-`GH_PAT`（repoスコープ）を設定し、`refresh-token.yml` を手動実行して確認。
+- `IG_ACCESS_TOKEN` の60日ごとの手動更新（自動更新なし。README §9参照）
+- 長期休業などで `PAUSE` フラグを使う運用が実際に機能するか、次の休業時に確認
+- 画像を追加・入れ替える際は9:16比率を保つこと（README §5参照）
 
 ## 未確認の受け入れ基準
 
-`SPEC.md` §15 のうち、以下がまだ未確認。
+`SPEC.md` §15 のうち、以下がまだ未確認（実運用の中で自然に確認できるものが多い）。
 
 - 12: A1セルに `PAUSE` を入れると全スロットが止まる
-- 7, 8: 投稿数上限の不足時・`all` モード途中失敗時の挙動（実APIが必要）
+- 7, 8: 投稿数上限の不足時・`all` モード途中失敗時の挙動
 - 14, 15: CSV取得失敗時のフォールバック（実URLでの再確認）
-- 18, 19: トークン破損時の通知、ログへのトークン非出力
+- 18: トークン破損時の通知（BOM混入トラブルの際に間接的に確認済み。意図的な破損テストは未実施）
 
-1〜6, 9〜11, 13, 16, 17 はローカル検証済み。
+1〜6, 9〜11, 13, 16, 17, 19 はローカル検証・本番投稿の両方で確認済み。
