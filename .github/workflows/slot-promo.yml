@@ -2,8 +2,10 @@ name: Slot - promo
 
 on:
   schedule:
-    # 18:00 JST = 09:00 UTC (time_jst は config.json の promo スロットに合わせる)
-    - cron: "0 9 * * *"
+    # 実際の投稿目標は18:00 JST(09:00 UTC)。
+    # ちょうど毎時0分はGitHub Actions全体で混雑し実行が遅延しやすいため、
+    # 22分早い17:38 JST(08:38 UTC)に起動し、後続の待機ステップで正確な時刻まで調整する。
+    - cron: "38 8 * * *"
   workflow_dispatch: {}
 
 concurrency:
@@ -25,6 +27,18 @@ jobs:
 
       - name: Install dependencies
         run: pip install requests
+
+      - name: Wait until 18:00 JST (09:00 UTC)
+        run: |
+          TARGET_EPOCH=$(date -u -d "$(date -u +%Y-%m-%d) 09:00:00" +%s)
+          NOW_EPOCH=$(date -u +%s)
+          SLEEP_SEC=$((TARGET_EPOCH - NOW_EPOCH))
+          if [ "$SLEEP_SEC" -gt 0 ]; then
+            echo "投稿予定時刻まで ${SLEEP_SEC} 秒待機します"
+            sleep "$SLEEP_SEC"
+          else
+            echo "既に予定時刻を過ぎているため、待機せず投稿します"
+          fi
 
       - name: Post story (promo)
         env:

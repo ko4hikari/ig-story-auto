@@ -142,7 +142,10 @@ gh secret set CLOSED_DAYS_CSV_URL --body "https://docs.google.com/.../pub?output
    }
    ```
 
-3. `.github/workflows/slot-open.yml` をコピーして `.github/workflows/slot-night.yml` を作り、`cron`（22:00 JST → `0 13 * * *`）と `--slot night` の2箇所だけ書き換える
+3. `.github/workflows/slot-open.yml` をコピーして `.github/workflows/slot-night.yml` を作り、以下を書き換える（§10参照）
+   - `cron`: 目標時刻より20〜25分早い`:00`以外の分にする（22:00 JST目標なら例えば `35 12 * * *` = 21:35 JST）
+   - 「Wait until」ステップの `TARGET_EPOCH` に渡す時刻を目標時刻のUTC表記にする（22:00 JST → `13:00:00`）
+   - `--slot night`
 
 ---
 
@@ -261,8 +264,12 @@ Facebookログイン方式のシステムユーザートークンには、Instag
 ## 10. タイムゾーンと実行タイミング
 
 - GitHub Actions の cron は UTC。「今日」の判定は必ず JST (`Asia/Tokyo`) で行う（`datetime.now()` をそのまま使わない設計にしている）
-- 例: 17:00 JST → `0 8 * * *` / 18:00 JST → `0 9 * * *` / 22:00 JST → `0 13 * * *`
-- GitHub Actions の scheduled workflow は混雑時に数分〜15分程度遅延することがある。分単位の正確さが要る場合は cron を早めに設定するか、遅延を許容すること
+- **毎時ちょうど（`:00`）は GitHub Actions 全体で混雑し、scheduled workflow が数分〜30分程度遅延することがある**（実際に発生した）。対策として、各 workflow は次の2段構えにしている
+  1. cron のトリガー自体は目標時刻より20〜25分早い、かつ`:00`を避けた分（例: `35 7 * * *` = 16:35 JST）に設定し、混雑を避ける
+  2. 起動後、「Wait until 〜」ステップで `date`/`sleep` を使い、UTCの目標時刻（例: 08:00 UTC = 17:00 JST）ちょうどまで待機してから投稿する
+  - この仕組みにより、cronの起動自体が多少遅れても、投稿時刻はほぼ正確に揃う（起動遅延が20分超のバッファを超えた場合のみズレが残る）
+  - 新しいスロットを追加する際も、cronは目標時刻の20分以上前・`:00`以外の分に設定し、同様の待機ステップを入れること
+  - 対応表: 17:00 JST → cron `35 7 * * *` + 待機目標 `08:00:00` UTC / 18:00 JST → cron `38 8 * * *` + 待機目標 `09:00:00` UTC
 - workflow はスロットごとに1ファイル（`slot-open.yml`, `slot-promo.yml`, ...）。まとめず分けているのは事故を防ぐため。各ファイルに `workflow_dispatch` を入れて手動実行できるようにしている
 
 ---
