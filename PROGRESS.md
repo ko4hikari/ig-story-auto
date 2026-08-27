@@ -47,8 +47,12 @@
 - 対策: cronの起動時刻を目標時刻の20〜25分前・`:00`以外の分にずらし（open: `35 7 * * *`、promo: `38 8 * * *`）、起動後に「Wait until」ステップでUTC目標時刻ちょうどまで`sleep`してから投稿するよう両workflowを修正・push済み
 - 次回のcron自動実行で、実際に時刻ズレが解消されているか要確認
 
-### ⑨ 起動の二重化と死活監視（2026-08-27）
-- **事故**: 8/27、open・promo とも GitHub Actions の scheduled workflow がまるごと発火せず（実行記録ゼロ）、ストーリーが1件も投稿されなかった。⑧の待機ステップは「起動が遅れたときの時刻ズレ」対策であり、「起動しない」ことは防げなかった。Discord通知も来なかった（そもそも処理が動いていないため）
+### ⑨ 起動の二重化と死活監視（2026-08-27〜28）
+- **事故（3つ重なっていた）**:
+  1. **GitHub Actions が約11時間遅延**: open は 07:35 UTC 起動予定が実際 18:22 UTC（03:22 JST 28日）、promo も 04:13 JST に起動。発火漏れではなく極端な遅延だった
+  2. **Instagram APIがアクセス拒否**: 遅れて起動後、投稿が `status 400 "API access blocked." OAuthException code 200` で失敗（open/promo 両方）。→ 調査の結果、**`IG_ACCESS_TOKEN`（システムユーザートークン）が無効化されていた**。Metaアプリ `level-story-auto`（ID 1337623905118660）自体は正常（制限・必要なアクション・アラートなし）、システムユーザー `igstoryautobot` のアセット割り当ても正常。グラフAPIエクスプローラーで新規発行したトークンでは同じエンドポイントが正常応答した。トークンは発行から約11日で60日期限には遠く、Meta側のセキュリティイベント（FBパスワード変更・不審ログイン等）かトークン取り消しで失効した可能性が高い
+  3. **失敗通知ステップが Discord に 403**: 追加した `if: failure()` ステップが `urllib` 使用で Discord に弾かれていた（`requests` に修正済み・`1e4c649`）。3時に届いた「投稿失敗」通知は `post_story.py` の `notify()`（`requests`使用）が正常に飛んだもの
+- **対応が必要（ユーザー作業・最優先）**: システムユーザー `igstoryautobot` から新トークンを生成し `IG_ACCESS_TOKEN` を更新する（Business Suite → 設定 → システムユーザー → トークンを生成 → アプリ `level-story-auto`、権限: instagram_basic / instagram_content_publish / pages_show_list / pages_read_engagement / business_management）。これが直るまで cron/監視を整えても投稿はできない
 - **対策（コード側・実装済み・要push）**:
   - `post_story.py` に `last_post.json`（スロット別の最終投稿日）を追加し、同日の二重投稿を防止（外部cronとGitHub cronの併用を可能にした）
   - `post_story.py` に healthchecks.io への死活ping（`HEALTHCHECK_URL` 環境変数）を追加。成功・意図的スキップ時に成功ping、異常時に `/fail` ping
