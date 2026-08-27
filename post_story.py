@@ -724,6 +724,32 @@ def cmd_refresh_token():
         return 1
 
     log(f"アクセストークンは有効です（対象: {data.get('name', 'unknown')}）")
+
+    # GET /me が通っても、Instagram投稿に必要な権限（instagram_content_publish 等）が
+    # 欠けていると投稿時に "API access blocked" 等で落ちる。ここで投稿系エンドポイントを
+    # 1つ（副作用のない content_publishing_limit）叩いて、投稿権限まで含めて確認する。
+    ig_user_id = os.environ.get("IG_USER_ID", "")
+    if not ig_user_id:
+        log("IG_USER_ID が未設定のため、投稿権限のチェックはスキップしました")
+        return 0
+    try:
+        remaining = get_publishing_limit(token, ig_user_id)
+    except RequestFailure as e:
+        notify(
+            "トークンは有効ですが、Instagram投稿系APIへのアクセスに失敗しました。"
+            "投稿に必要な権限が付いていないか、アプリ側で制限されている可能性があります。"
+            "システムユーザーからトークンを再生成する際に instagram_content_publish 等を"
+            f"付けているか確認してください。status={e.status_code} body={e.body}"
+        )
+        return 1
+    except (requests.RequestException, KeyError, ValueError) as e:
+        notify(f"Instagram投稿系APIの確認に失敗しました: {e}")
+        return 1
+
+    if remaining is None:
+        log("投稿数上限は判定できませんでしたが、投稿系APIへのアクセスは成功しました")
+    else:
+        log(f"Instagram投稿系APIも正常です（24時間の残り投稿可能数: {remaining}）")
     return 0
 
 
