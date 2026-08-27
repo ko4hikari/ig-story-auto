@@ -47,16 +47,46 @@ jobs:
           IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
           NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
           CLOSED_DAYS_CSV_URL: ${{ secrets.CLOSED_DAYS_CSV_URL }}
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL_PROMO }}
         run: python post_story.py --slot promo
 
-      - name: Commit closed_days.txt if changed
+      - name: Commit state files if changed
         run: |
-          if ! git diff --quiet -- closed_days.txt; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add closed_days.txt
-            git commit -m "chore: update closed_days.txt [skip ci]"
-            git push
-          else
-            echo "closed_days.txt unchanged"
+          if git diff --quiet -- closed_days.txt last_post.json; then
+            echo "closed_days.txt / last_post.json unchanged"
+            exit 0
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add closed_days.txt last_post.json
+          git commit -m "chore: update state files [skip ci]"
+          # 外部cronとGitHub cronの併用で push が競合しうるため、rebase して数回リトライする。
+          # 競合が解消できなくてもジョブは失敗させない（状態ファイルは次回実行で再同期される）。
+          for i in 1 2 3; do
+            if git pull --rebase --autostash origin main && git push; then
+              exit 0
+            fi
+            echo "push retry $i"
+            sleep 5
+          done
+          echo "::warning::state files のコミットに失敗しました（次回の実行で再同期されます）"
+
+      - name: Notify on workflow failure
+        if: failure()
+        env:
+          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'EOF'
+          import os, json, urllib.request
+          webhook = os.environ.get("NOTIFY_WEBHOOK")
+          if not webhook:
+              raise SystemExit(0)
+          msg = "⚠️ Slot - promo のワークフローが失敗しました。\n" + os.environ.get("RUN_URL", "")
+          data = json.dumps({"content": msg, "text": msg}).encode("utf-8")
+          req = urllib.request.Request(webhook, data=data, headers={"Content-Type": "application/json"})
+          try:
+              urllib.request.urlopen(req, timeout=15)
+          except Exception as e:
+              print("通知の送信に失敗:", e)
+          EOF

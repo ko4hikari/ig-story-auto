@@ -47,9 +47,23 @@
 - 対策: cronの起動時刻を目標時刻の20〜25分前・`:00`以外の分にずらし（open: `35 7 * * *`、promo: `38 8 * * *`）、起動後に「Wait until」ステップでUTC目標時刻ちょうどまで`sleep`してから投稿するよう両workflowを修正・push済み
 - 次回のcron自動実行で、実際に時刻ズレが解消されているか要確認
 
+### ⑨ 起動の二重化と死活監視（2026-08-27）
+- **事故**: 8/27、open・promo とも GitHub Actions の scheduled workflow がまるごと発火せず（実行記録ゼロ）、ストーリーが1件も投稿されなかった。⑧の待機ステップは「起動が遅れたときの時刻ズレ」対策であり、「起動しない」ことは防げなかった。Discord通知も来なかった（そもそも処理が動いていないため）
+- **対策（コード側・実装済み・要push）**:
+  - `post_story.py` に `last_post.json`（スロット別の最終投稿日）を追加し、同日の二重投稿を防止（外部cronとGitHub cronの併用を可能にした）
+  - `post_story.py` に healthchecks.io への死活ping（`HEALTHCHECK_URL` 環境変数）を追加。成功・意図的スキップ時に成功ping、異常時に `/fail` ping
+  - 両 workflow に `if: failure()` の失敗通知ステップを追加（`pip install` 失敗やPython未捕捉例外もDiscordに飛ぶ）
+  - 両 workflow の commit ステップを `closed_days.txt last_post.json` の両方対象に変更
+- **対策（外部サービス・未設定）**: README §11 の手順で以下を設定する
+  1. cron-job.org: GitHub PAT（Actions R/W）を発行し、16:50 / 17:50 JST に `workflow_dispatch` を叩くジョブを2つ作る
+  2. healthchecks.io: チェックを2つ作り Discord連携。ping URL を Secrets `HEALTHCHECK_URL_OPEN` / `HEALTHCHECK_URL_PROMO` に登録
+- **未確認**: 次回の自動実行で、外部cron起動・二重投稿防止・healthchecks通知が想定どおり動くか
+
 ## 次にやること
 
-- **次回の自動投稿（open 17:00 JST / promo 18:00 JST）で、時刻ズレ対策が効いているか確認する**（⑧参照）
+- **外部サービスの設定**: cron-job.org と healthchecks.io を README §11 の手順で設定する（⑨参照）。設定後、`gh secret set HEALTHCHECK_URL_OPEN` / `HEALTHCHECK_URL_PROMO` を実行
+- **次回の自動投稿（open 17:00 JST / promo 18:00 JST）で、時刻ズレ対策（⑧）と起動二重化・死活監視（⑨）が効いているか確認する**
+- `cron-job.org` の GitHub PAT の有効期限（最長1年）をカレンダーに登録して更新漏れを防ぐ
 - `IG_ACCESS_TOKEN` の60日ごとの手動更新（自動更新なし。README §9参照）
 - 長期休業などで `PAUSE` フラグを使う運用が実際に機能するか、次の休業時に確認
 - 画像を追加・入れ替える際は9:16比率を保つこと（README §5参照）

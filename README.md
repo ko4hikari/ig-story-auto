@@ -75,6 +75,8 @@ CSVは日付情報のみなので公開しても実害は少ないが、URLを�
 | `IMAGE_BASE_URL` | raw URL のベース。末尾スラッシュなし。例: `https://raw.githubusercontent.com/{user}/{repo}/main` |
 | `NOTIFY_WEBHOOK` | 失敗通知先（Discord または Slack の Incoming Webhook URL） |
 | `CLOSED_DAYS_CSV_URL` | 休業日シートの公開CSV URL |
+| `HEALTHCHECK_URL_OPEN` | openスロットの死活監視ping URL（healthchecks.io。§11参照） |
+| `HEALTHCHECK_URL_PROMO` | promoスロットの死活監視ping URL（healthchecks.io。§11参照） |
 
 CLIから設定する場合:
 
@@ -84,6 +86,8 @@ gh secret set IG_USER_ID --body "1784xxxxxxxxxxxx"
 gh secret set IMAGE_BASE_URL --body "https://raw.githubusercontent.com/USER/REPO/main"
 gh secret set NOTIFY_WEBHOOK --body "https://discord.com/api/webhooks/..."
 gh secret set CLOSED_DAYS_CSV_URL --body "https://docs.google.com/.../pub?output=csv"
+gh secret set HEALTHCHECK_URL_OPEN --body "https://hc-ping.com/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+gh secret set HEALTHCHECK_URL_PROMO --body "https://hc-ping.com/yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
 ```
 
 **Windows PowerShellで設定する場合は `--body` を使うこと。** `Get-Clipboard | gh secret set NAME` のようにパイプで渡すと、PowerShellの既定エンコーディングにより値の先頭に見えないBOM文字が混入し、トークンやURLとして正しく認識されなくなる（実際にこの事故が起きて `IG_ACCESS_TOKEN` と `NOTIFY_WEBHOOK` が壊れたことがある）。`gh secret set NAME --body $value` の形式なら安全。
@@ -274,7 +278,63 @@ Facebookログイン方式のシステムユーザートークンには、Instag
 
 ---
 
-## 11. やらないこと（意図的に対象外）
+## 11. 起動の二重化（外部cron）と死活監視
+
+### 背景
+
+GitHub Actions の `on: schedule`（cron）は**ベストエフォート**で、GitHub側が混雑していると遅延するだけでなく、**その日の実行がまるごと発火しない**ことがある（2026-08-27 に発生。open・promo とも実行記録ゼロ）。§10 の待機ステップは「起動が遅れたときの時刻ズレ」は直せるが、「起動しない」ことには無力。
+
+### 対策1: 外部cronで起動を二重化する（cron-job.org）
+
+無料の外部cronサービス [cron-job.org](https://cron-job.org) から GitHub API を叩き、時刻になったら `workflow_dispatch` で強制的に起動する。GitHub内蔵のcronは保険としてそのまま残す。
+
+**手順:**
+
+1. GitHubで**ファイングレインド個人アクセストークン (PAT)** を発行する
+   - `Settings` → `Developer settings` → `Fine-grained tokens` → `Generate new token`
+   - Repository access: `Only select repositories` → `ig-story-auto` のみ
+   - Permissions: `Actions` を `Read and write` に設定（他は不要）
+   - Expiration: 最長1年。**期限切れで起動が止まるので、更新日をカレンダーに登録すること**
+2. cron-job.org に登録し、アカウントのタイムゾーンを `Asia/Tokyo` にする
+3. ジョブを2つ作る（open用・promo用）。共通設定:
+   - URL: `https://api.github.com/repos/ko4hikari/ig-story-auto/actions/workflows/<ファイル名>/dispatches`
+     - open: `.../workflows/slot-open.yml/dispatches`
+     - promo: `.../workflows/slot-promo.yml/dispatches`
+   - Method: `POST`
+   - Request headers:
+     - `Accept: application/vnd.github+json`
+     - `Authorization: Bearer <発行したPAT>`
+     - `X-GitHub-Api-Version: 2022-11-28`
+   - Request body: `{"ref":"main"}`
+   - Schedule: open = 毎日 16:50、promo = 毎日 17:50（目標時刻の10分前。あとは workflow の待機ステップが正確な時刻まで調整する）
+4. cron-job.org の「Notifications」で、リクエスト失敗時にメール通知するよう設定しておく
+
+> **二重投稿にならない理由:** `post_story.py` は投稿前に `last_post.json` を見て「今日そのスロットを投稿済みか」を確認する。GitHub内蔵cronと外部cronの両方が起動しても、実際に投稿するのは1回だけ。`last_post.json` は `closed_days.txt` と同じく workflow が自動コミットする。
+
+### 対策2: 未投稿を検知する死活監視（healthchecks.io）
+
+「投稿されなかったこと」に気づけるよう、[healthchecks.io](https://healthchecks.io)（無料。20チェックまで）でデッドマンスイッチを置く。投稿が完了（または休業で意図的にスキップ）すると `post_story.py` が ping を送る。予定時刻を過ぎても ping が来なければ healthchecks.io が異常と判断して Discord に通知する。
+
+**手順:**
+
+1. healthchecks.io に登録し、チェックを2つ作る（`ig-story-open` / `ig-story-promo`）
+2. 各チェックのスケジュールを設定
+   - open: Cron `0 17 * * *`、Timezone `Asia/Tokyo`、Grace Time `45 min`
+   - promo: Cron `0 18 * * *`、Timezone `Asia/Tokyo`、Grace Time `45 min`
+3. `Integrations` → `Discord` を追加し、通知先チャンネルの Webhook を連携する（`NOTIFY_WEBHOOK` と同じでよい）
+4. 各チェックの ping URL（`https://hc-ping.com/<UUID>`）を GitHub Secrets に登録する
+   - `gh secret set HEALTHCHECK_URL_OPEN --body "https://hc-ping.com/xxxx..."`
+   - `gh secret set HEALTHCHECK_URL_PROMO --body "https://hc-ping.com/yyyy..."`
+
+`HEALTHCHECK_URL` が未設定でも `post_story.py` はそのまま動く（ping をスキップするだけ）。
+
+### 対策3: ワークフロー失敗時の通知
+
+投稿処理より前の段階（`pip install` 失敗、Pythonの未捕捉例外など）でコケた場合に備え、両 workflow に `if: failure()` の通知ステップを入れてある。`NOTIFY_WEBHOOK` に「⚠️ ワークフローが失敗しました」＋実行ログのURLを送る。
+
+---
+
+## 12. やらないこと（意図的に対象外）
 
 - 画像の動的生成（テキスト差し込みなど）
 - メンション・リンク・投票などのステッカー（Instagram API が非対応）
@@ -283,7 +343,7 @@ Facebookログイン方式のシステムユーザートークンには、Instag
 
 ---
 
-## 12. 受け入れ基準チェックリスト
+## 13. 受け入れ基準チェックリスト
 
 | # | 基準 | 確認方法 |
 |---|---|---|
@@ -299,7 +359,7 @@ Facebookログイン方式のシステムユーザートークンには、Instag
 | 10 | シートに `オープンのみ停止` を足すと open のみ停止、promo は投稿される | `slot_status()` の `respect_closed_days` 判定 |
 | 11 | シートに `全停止` を足すと両方停止する | `slot_status()` の `TYPE_ALL` 判定 |
 | 12 | A1に `PAUSE` を入れると全スロット停止 | `_parse_csv()` の A1 判定 |
-| 13 | 実行後、シート内容が `closed_days.txt` にコミットされる | 各 workflow の `Commit closed_days.txt if changed` ステップ |
+| 13 | 実行後、シート内容が `closed_days.txt` にコミットされる | 各 workflow の `Commit state files if changed` ステップ |
 | 14 | CSV取得失敗時、キャッシュで動作し通知が飛ぶ | `CLOSED_DAYS_CSV_URL` を無効な値にして実行 |
 | 15 | CSV取得失敗かつキャッシュ不在なら投稿せず通知 | `closed_days.txt` を削除して実行 |
 | 16 | `2026/8/17` 形式が正しく解釈される | `_parse_sheet_date()` |
@@ -309,10 +369,13 @@ Facebookログイン方式のシステムユーザートークンには、Instag
 
 ---
 
-## 13. トラブルシューティング
+## 14. トラブルシューティング
 
 - **`--check` / `--dry-run` で `CLOSED_DAYS_CSV_URL is not set` と出る**: 環境変数（またはSecrets）を設定しているか確認する
 - **投稿が失敗し続ける**: 通知に含まれる HTTPステータスとレスポンスbodyを確認する。`190`（`Cannot parse access token` 等）はトークン失効・書式破損の可能性が高い。PowerShellでパイプ経由で `gh secret set` した場合はBOM混入を疑う（§3参照）。§1の手順で新しいトークンを再発行する
 - **60日後に投稿が止まった**: `IG_ACCESS_TOKEN` の期限切れが濃厚。§1の手順6〜7で新しいトークンを再発行し、`gh secret set IG_ACCESS_TOKEN --body "..."` で更新する
 - **投稿画像の左右（または上下）が切れる**: Instagramストーリーズの表示枠（9:16）と画像の比率が合っていない。1080×1920に、はみ出す方向をぼかし背景で埋めた画像に差し替える
 - **休業日が反映されない**: シートの「ウェブに公開」設定が解除されていないか、B列の値が `オープンのみ停止` / `全停止` の表記と完全一致しているか確認する
+- **その日のストーリーが1つも投稿されなかった／GitHub Actions に実行記録がない**: GitHub内蔵cronの発火漏れ。§11 の外部cron（cron-job.org）と死活監視（healthchecks.io）を設定しておく。応急処置は `Actions` タブから該当 workflow を手動実行（`Run workflow`）
+- **healthchecks.io から「down」通知が来たが、実際には投稿されている**: `HEALTHCHECK_URL_OPEN` / `HEALTHCHECK_URL_PROMO` の値が正しいか、healthchecks.io 側の Cron / Timezone / Grace Time の設定が §11 のとおりか確認する
+- **同じ画像が1日に2回投稿された**: `last_post.json` が正しくコミットされているか確認する（`Commit state files if changed` ステップのログ）。手動実行を短時間に複数回行った場合も起こりうる

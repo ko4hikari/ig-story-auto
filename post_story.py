@@ -28,6 +28,9 @@ JST = timezone(timedelta(hours=9))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 CLOSED_DAYS_PATH = os.path.join(BASE_DIR, "closed_days.txt")
+# スロットごとの「最終投稿日」を記録するファイル。二重投稿の防止に使う。
+# closed_days.txt と同様、workflow が変更を自動コミットする。
+LAST_POST_PATH = os.path.join(BASE_DIR, "last_post.json")
 
 IG_API_VERSION = os.environ.get("IG_API_VERSION") or "v23.0"
 # Facebookログイン方式（ページ経由）のInstagram APIを使用する。
@@ -99,6 +102,52 @@ def notify(message):
         requests.post(webhook, json=payload, timeout=15)
     except requests.RequestException as e:
         log_err(f"通知の送信に失敗しました: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 死活監視 (healthchecks.io) と 二重投稿の防止 (last_post.json)
+# ---------------------------------------------------------------------------
+
+
+def ping_healthcheck(suffix=""):
+    """healthchecks.io に死活監視のpingを送る。
+
+    環境変数 HEALTHCHECK_URL が未設定なら何もしない。
+    suffix="" は成功ping（正常稼働の合図）、suffix="/fail" は失敗ping。
+    予定時刻を過ぎてもpingが届かなければ、healthchecks.io 側が
+    「投稿されていない」と判断して Discord に自動通知する。
+    """
+    base = (os.environ.get("HEALTHCHECK_URL") or "").strip()
+    if not base:
+        return
+    url = base.rstrip("/") + suffix
+    try:
+        requests.get(url, timeout=10)
+        log(f"healthcheck ping 送信: {suffix or 'success'}")
+    except requests.RequestException as e:
+        log_err(f"healthcheck ping の送信に失敗しました: {e}")
+
+
+def _read_last_post():
+    """last_post.json を読む。ファイルが無い・壊れている場合は空の辞書を返す。"""
+    try:
+        with open(LAST_POST_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_last_post(slot_name, date_str):
+    """スロットの最終投稿日（JST）を last_post.json に記録する。"""
+    data = _read_last_post()
+    data[slot_name] = date_str
+    try:
+        with open(LAST_POST_PATH, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.write("\n")
+    except OSError as e:
+        log_err(f"last_post.json の書き込みに失敗しました: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -517,6 +566,17 @@ def cmd_dry_run(slots, slot_name):
 
 
 def cmd_post(slots, slot_name):
+    """実投稿のエントリポイント。処理結果に応じて healthchecks.io へpingを送る。
+
+    戻り値 0（投稿成功・または休業などで意図的に投稿しなかった）→ 成功ping
+    戻り値 1（異常で投稿できなかった）→ 失敗ping
+    """
+    rc = _run_post(slots, slot_name)
+    ping_healthcheck("" if rc == 0 else "/fail")
+    return rc
+
+
+def _run_post(slots, slot_name):
     slot = get_slot(slots, slot_name)
     token = os.environ.get("IG_ACCESS_TOKEN", "")
     ig_user_id = os.environ.get("IG_USER_ID", "")
@@ -532,6 +592,14 @@ def cmd_post(slots, slot_name):
         return 1  # resolve_closed_days 内で通知済み
 
     today = datetime.now(JST).date()
+    today_str = today.isoformat()
+
+    # 二重投稿の防止: 外部cron(cron-job.org)とGitHubのcronが両方起動しても、
+    # 同じ日に同じスロットを投稿するのは1回だけにする。
+    if _read_last_post().get(slot_name) == today_str:
+        log(f"[{slot_name}] 本日分（{today_str}）は投稿済みのためスキップします")
+        return 0
+
     will_post, reason = slot_status(slot, today, state)
     if not will_post:
         log(f"[{slot_name}] 本日は休業のため投稿しません ({reason})")
@@ -543,8 +611,15 @@ def cmd_post(slots, slot_name):
         return 1
 
     if slot["mode"] == "rotate":
-        return _post_rotate(slot_name, slot, images, today, token, ig_user_id)
-    return _post_all(slot_name, slot, images, token, ig_user_id)
+        rc = _post_rotate(slot_name, slot, images, today, token, ig_user_id)
+    else:
+        rc = _post_all(slot_name, slot, images, token, ig_user_id)
+
+    # 完全に成功したときだけ「投稿済み」として記録する。
+    # 一部失敗のときは記録せず、後続の起動でのリトライ機会を残す。
+    if rc == 0:
+        _write_last_post(slot_name, today_str)
+    return rc
 
 
 def _post_rotate(slot_name, slot, images, today, token, ig_user_id):
@@ -669,6 +744,7 @@ def main():
     register_secret(os.environ.get("IG_ACCESS_TOKEN"))
     register_secret(os.environ.get("GH_PAT"))
     register_secret(os.environ.get("NOTIFY_WEBHOOK"))
+    register_secret(os.environ.get("HEALTHCHECK_URL"))
 
     if args.refresh_token:
         return cmd_refresh_token()
