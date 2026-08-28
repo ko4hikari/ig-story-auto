@@ -1,0 +1,82 @@
+name: Test (dry-run)
+
+# 投稿は一切行わないテスト用ワークフロー。手動実行のみ。
+# 実際の Secrets を使って以下を確認する:
+#   - 休業日CSV(Googleスプレッドシート)が取得できるか
+#   - config.json の判定ロジックと画像ローテーションが正しく動くか
+#   - 投稿予定の画像URLに Instagram(Meta) がアクセスできるか (HTTP 200 か)
+#   - アクセストークンが有効で、投稿系API(content_publishing_limit)まで通るか
+on:
+  workflow_dispatch: {}
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: 今後14日間の投稿予定 (--check)
+        env:
+          CLOSED_DAYS_CSV_URL: ${{ secrets.CLOSED_DAYS_CSV_URL }}
+          IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
+          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+        run: python post_story.py --check
+
+      - name: dry-run (open)
+        env:
+          CLOSED_DAYS_CSV_URL: ${{ secrets.CLOSED_DAYS_CSV_URL }}
+          IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
+          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+        run: python post_story.py --slot open --dry-run
+
+      - name: dry-run (promo)
+        env:
+          CLOSED_DAYS_CSV_URL: ${{ secrets.CLOSED_DAYS_CSV_URL }}
+          IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
+          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+        run: python post_story.py --slot promo --dry-run
+
+      - name: 画像URLに Instagram がアクセスできるか確認 (HTTP 200)
+        env:
+          IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
+        run: |
+          python - <<'EOF'
+          import datetime, sys
+          import requests
+          import post_story as p
+
+          today = datetime.datetime.now(p.JST).date()
+          urls = []
+          for name, slot in p.load_config().items():
+              imgs = p.list_slot_images(slot["folder"])
+              picks = [p.select_rotate_image(imgs, today)] if slot["mode"] == "rotate" else imgs
+              for fn in picks:
+                  urls.append(p.build_image_url(slot["folder"], fn))
+
+          bad = False
+          for u in urls:
+              try:
+                  r = requests.get(u, timeout=20)
+                  ct = r.headers.get("content-type", "")
+                  ok = r.status_code == 200 and ct.startswith("image/")
+                  print(f"{'OK ' if ok else 'NG '} {r.status_code} {ct:12} {len(r.content):>8}B  {u}")
+                  bad = bad or not ok
+              except requests.RequestException as e:
+                  print(f"NG  ERR {e}  {u}")
+                  bad = True
+          sys.exit(1 if bad else 0)
+          EOF
+
+      - name: アクセストークンと投稿系APIの確認 (--refresh-token)
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+        run: python post_story.py --refresh-token
