@@ -310,6 +310,8 @@ GitHub Actions の `on: schedule`（cron）は**ベストエフォート**で、
 4. cron-job.org の「Notifications」で、リクエスト失敗時にメール通知するよう設定しておく
 
 > **二重投稿にならない理由:** `post_story.py` は投稿前に `last_post.json` を見て「今日そのスロットを投稿済みか」を確認する。GitHub内蔵cronと外部cronの両方が起動しても、実際に投稿するのは1回だけ。`last_post.json` は `closed_days.txt` と同じく workflow が自動コミットする。
+>
+> **二重起動時の待機時間の無駄を減らす仕組み:** 各 workflow の先頭（待機ステップの前）に `Skip if already posted today` ステップがあり、最新の `origin/main` の `last_post.json` を見て本日分が投稿済みなら、待機（最大20〜25分の `sleep`）と投稿ステップを丸ごとスキップする。`checkout` は起動時点のコミットしか持たないため、先行 run のコミットを取りに行くよう `git fetch` してから判定している。これにより、2回目に起動した run が無駄に20分以上 runner を占有しなくなる（Actions実行時間の節約。private リポジトリの無料枠対策にもなる）。
 
 ### 対策2: 未投稿を検知する死活監視（healthchecks.io）
 

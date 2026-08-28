@@ -25,10 +25,32 @@ jobs:
         with:
           python-version: "3.11"
 
+      # 二重起動(外部cron + GitHub内蔵cron)対策。
+      # 本日分が既に投稿済みなら、この後の待機(最大25分)と投稿をまるごとスキップし、
+      # Actions実行時間の無駄を減らす。
+      # checkout は起動時点のSHAなので先行runのコミットが反映されていない。
+      # そのため最新の origin/main の last_post.json を直接見て判定する。
+      - name: Skip if already posted today
+        id: dedup
+        run: |
+          TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+          git fetch origin main --quiet || true
+          POSTED=$(git show FETCH_HEAD:last_post.json 2>/dev/null \
+            | python -c "import json,sys; print((json.load(sys.stdin) or {}).get('open',''))" 2>/dev/null || echo "")
+          echo "本日(JST)=$TODAY / open の最終投稿日=$POSTED"
+          if [ "$POSTED" = "$TODAY" ]; then
+            echo "本日分は投稿済み。待機・投稿をスキップします"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install dependencies
+        if: steps.dedup.outputs.skip != 'true'
         run: pip install requests
 
       - name: Wait until 17:00 JST (08:00 UTC)
+        if: steps.dedup.outputs.skip != 'true'
         run: |
           TARGET_EPOCH=$(date -u -d "$(date -u +%Y-%m-%d) 08:00:00" +%s)
           NOW_EPOCH=$(date -u +%s)
@@ -41,6 +63,7 @@ jobs:
           fi
 
       - name: Post story (open)
+        if: steps.dedup.outputs.skip != 'true'
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
@@ -51,6 +74,7 @@ jobs:
         run: python post_story.py --slot open
 
       - name: Commit state files if changed
+        if: steps.dedup.outputs.skip != 'true'
         run: |
           if git diff --quiet -- closed_days.txt last_post.json; then
             echo "closed_days.txt / last_post.json unchanged"
