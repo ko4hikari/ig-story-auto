@@ -65,12 +65,14 @@
   - **healthchecks.io**: チェック2つ作成（`ig-story-open` cron `0 17 * * *` / `ig-story-promo` cron `0 18 * * *`、いずれも TZ Asia/Tokyo・Grace 45分）。ping URL を Secrets `HEALTHCHECK_URL_OPEN` / `HEALTHCHECK_URL_PROMO` に登録済み。初期pingでアラート有効化済み。通知先は現状メール（`liyibinsnke@gmail.com`）。**Discord連携（「Connect Discord」のOAuth）は未実施**
 - **未確認**: 次回の自動投稿（17:00/18:00 JST）で、二重投稿防止・healthchecks成功ping・全体の流れが想定どおり動くか
 
+### ⑩ 仕上げ（2026-08-28）
+- **healthchecks.io の Discord連携完了**: `Discord` integration を追加し2チェック両方に割り当て。意図的に `/fail` ping して Discord・メール両方で「DOWN」通知の配信成功を実証（その後復旧）
+- **GitHub PAT 作り直し完了**: 旧トークン（チャット露出）を新トークン（`github_pat_11BK3NVHA0zhN05j6H8O6V_...`、期限は要確認）に差し替え。cron-job.org 両ジョブの試運転で HTTP 204 を確認後、旧トークンを Revoke。旧トークンで `gh api` → `401 Bad credentials` を確認済み
+
 ## 次にやること
 
-- **healthchecks.io の Discord連携**: INTEGRATIONS → Discord → Connect Discord で、`NOTIFY_WEBHOOK` と同じチャンネルに紐付ける（現状はメール通知のみ）
-- **露出した GitHub PAT の作り直し**: cron-job.org 設定時のトークンをチャットに貼ってしまったため、GitHubで再発行 → cron-job.org の Authorization ヘッダーだけ差し替え → 旧トークンを Revoke
-- **次回の自動投稿（open 17:00 JST / promo 18:00 JST）で、時刻ズレ対策（⑧）と起動二重化・死活監視（⑨）が効いているか確認する**
-- `cron-job.org` の GitHub PAT の有効期限（2027-08-26）をカレンダーに登録して更新漏れを防ぐ
+- **次回の自動投稿（open 17:00 JST / promo 18:00 JST）で、起動二重化・二重投稿防止・healthchecks成功pingが想定どおり動くか確認する**（初回の本番稼働）
+- `cron-job.org` の新 GitHub PAT の有効期限をカレンダーに登録して更新漏れを防ぐ
 - `IG_ACCESS_TOKEN` の60日ごとの手動更新（自動更新なし。README §9参照）
 - 長期休業などで `PAUSE` フラグを使う運用が実際に機能するか、次の休業時に確認
 - 画像を追加・入れ替える際は9:16比率を保つこと（README §5参照）
