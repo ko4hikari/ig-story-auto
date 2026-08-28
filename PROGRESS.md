@@ -58,16 +58,19 @@
   - `post_story.py` に healthchecks.io への死活ping（`HEALTHCHECK_URL` 環境変数）を追加。成功・意図的スキップ時に成功ping、異常時に `/fail` ping
   - 両 workflow に `if: failure()` の失敗通知ステップを追加（`pip install` 失敗やPython未捕捉例外もDiscordに飛ぶ）
   - 両 workflow の commit ステップを `closed_days.txt last_post.json` の両方対象に変更
-- **対策（外部サービス・未設定）**: README §11 の手順で以下を設定する
-  1. cron-job.org: GitHub PAT（Actions R/W）を発行し、16:50 / 17:50 JST に `workflow_dispatch` を叩くジョブを2つ作る
-  2. healthchecks.io: チェックを2つ作り Discord連携。ping URL を Secrets `HEALTHCHECK_URL_OPEN` / `HEALTHCHECK_URL_PROMO` に登録
-- **未確認**: 次回の自動実行で、外部cron起動・二重投稿防止・healthchecks通知が想定どおり動くか
+- **対応済み（2026-08-28）**:
+  - `IG_ACCESS_TOKEN` を新トークンに更新。`--refresh-token` に投稿系API（`content_publishing_limit`）チェックを追加し、`/me` だけでなく投稿権限まで検証。手動実行で「有効・投稿系API正常（残り100）」を確認
+  - 失敗通知ステップを `urllib` → `requests` に修正（`1e4c649`）。`refresh-token.yml` に `IG_USER_ID` 追加（`f03e31a`）
+  - **cron-job.org**: ジョブ2つ作成（`ig-story open` 16:50 JST / `ig-story promo` 17:50 JST）。`workflow_dispatch` API を POST。両方「試運転」で **HTTP 204** を確認済み（＝GitHubが正常受理）。GitHub PATの有効期限は **2027-08-26**（カレンダー登録推奨）
+  - **healthchecks.io**: チェック2つ作成（`ig-story-open` cron `0 17 * * *` / `ig-story-promo` cron `0 18 * * *`、いずれも TZ Asia/Tokyo・Grace 45分）。ping URL を Secrets `HEALTHCHECK_URL_OPEN` / `HEALTHCHECK_URL_PROMO` に登録済み。初期pingでアラート有効化済み。通知先は現状メール（`liyibinsnke@gmail.com`）。**Discord連携（「Connect Discord」のOAuth）は未実施**
+- **未確認**: 次回の自動投稿（17:00/18:00 JST）で、二重投稿防止・healthchecks成功ping・全体の流れが想定どおり動くか
 
 ## 次にやること
 
-- **外部サービスの設定**: cron-job.org と healthchecks.io を README §11 の手順で設定する（⑨参照）。設定後、`gh secret set HEALTHCHECK_URL_OPEN` / `HEALTHCHECK_URL_PROMO` を実行
+- **healthchecks.io の Discord連携**: INTEGRATIONS → Discord → Connect Discord で、`NOTIFY_WEBHOOK` と同じチャンネルに紐付ける（現状はメール通知のみ）
+- **露出した GitHub PAT の作り直し**: cron-job.org 設定時のトークンをチャットに貼ってしまったため、GitHubで再発行 → cron-job.org の Authorization ヘッダーだけ差し替え → 旧トークンを Revoke
 - **次回の自動投稿（open 17:00 JST / promo 18:00 JST）で、時刻ズレ対策（⑧）と起動二重化・死活監視（⑨）が効いているか確認する**
-- `cron-job.org` の GitHub PAT の有効期限（最長1年）をカレンダーに登録して更新漏れを防ぐ
+- `cron-job.org` の GitHub PAT の有効期限（2027-08-26）をカレンダーに登録して更新漏れを防ぐ
 - `IG_ACCESS_TOKEN` の60日ごとの手動更新（自動更新なし。README §9参照）
 - 長期休業などで `PAUSE` フラグを使う運用が実際に機能するか、次の休業時に確認
 - 画像を追加・入れ替える際は9:16比率を保つこと（README §5参照）
