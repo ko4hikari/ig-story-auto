@@ -27,7 +27,7 @@ repo/
 
 1. Instagram アカウントを **プロアカウント（ビジネス）** に切り替え、**Facebookページと連携**しておく（連携済みページは他用途（例: Meta広告）と共用でよい。**そのページを解除・削除しないこと**）
 2. https://developers.facebook.com で開発者登録し、アプリを新規作成する。プロダクトに **Instagram** と **Facebookログイン** を追加する
-3. [Meta Business Suite](https://business.facebook.com/latest/settings/system_users) の「システムユーザー」で、投稿専用の**システムユーザー**（人間のアカウントではないAPI専用アカウント）を作成する
+3. [Meta Business Suite のビジネス設定](https://business.facebook.com/settings/system-users) の「システムユーザー」で、投稿専用の**システムユーザー**（人間のアカウントではないAPI専用アカウント）を作成する（Business Suite のホーム画面ではなく「ビジネス設定」→「ユーザー」→「システムユーザー」）
 4. アプリの「ロール」設定で、そのシステムユーザーを**テスター**として追加する（数値IDで検索すること。ユーザー名検索は失敗しやすい）
 5. システムユーザーの「割り当てられたアセット」で、対象のFacebookページを割り当てる（権限は投稿に必要な「コンテンツ」があればよい）
 6. システムユーザーの詳細画面で「トークンを生成」→ 対象アプリを選択 → 有効期限「60日間」を選択 → 権限はデフォルトのまま生成
@@ -256,12 +256,16 @@ PAUSE=false
 
 ## 9. アクセストークンの有効性チェック
 
-Facebookログイン方式のシステムユーザートークンには、Instagram Login方式のような「60日ごとに自動延長するAPI」が存在しない。パスワード変更やアプリ連携解除をしない限り実質無期限で失効しないため、`refresh-token.yml` は**自動更新ではなく有効性チェックのみ**を行う。
+Facebookログイン方式のシステムユーザートークンには、Instagram Login方式のような「60日ごとに自動延長するAPI」が存在しない。**トークン生成時に選んだ有効期限（本プロジェクトは「60日間」で発行）でそのまま失効する**ため、期限が切れる前に手動で再発行する必要がある。`refresh-token.yml` は自動更新ができないので、有効性チェックと期限接近の警告のみを行う。
+
+失効すると `OAuthException code:190 subcode:463`（Session has expired）で投稿系APIが400を返し、open/promo とも落ちる（2026-08-27・2026-08-28 に発生）。
 
 - `refresh-token.yml` が週1回、`python post_story.py --refresh-token` を実行する
-  - `GET https://graph.facebook.com/me` にトークンを渡し、正常応答するか確認するだけ（書き換えは行わない）
-- トークンが無効化されていた場合は通知が飛ぶので、[Meta Business Suiteのシステムユーザーページ](https://business.facebook.com/latest/settings/system_users)から**新しいトークンを再発行**し、`IG_ACCESS_TOKEN` を手動で更新する（§1の手順6〜7と同じ）
-- 60日の有効期限が近づいても自動通知は来ないため、カレンダー等で更新時期をリマインドしておくことを推奨する
+  - `GET https://graph.facebook.com/me` でトークンが有効か確認する（書き換えはしない）
+  - `GET .../{IG_USER_ID}/content_publishing_limit`（副作用なし）で投稿系APIの権限まで確認する
+  - `GET https://graph.facebook.com/debug_token` で `expires_at` を取得し、**残り `TOKEN_EXPIRY_WARN_DAYS`（既定10）日以内なら Discord に警告通知**する（`expires_at` が 0 = 無期限なら通知しない）
+- トークンが無効化されている／期限が近い場合は通知が飛ぶので、[Meta Business Suite のシステムユーザーページ](https://business.facebook.com/settings/system-users)から**新しいトークンを再発行**し、`gh secret set IG_ACCESS_TOKEN --body "..."` で更新する（§1の手順6〜7と同じ。アクセス許可は既に選択済みの5件をそのまま使う）
+- 再発行したら、次回の失効予定日（発行日 + 選んだ日数）を控えておくとよい
 
 ---
 

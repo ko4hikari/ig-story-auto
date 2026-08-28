@@ -39,6 +39,8 @@ IG_BASE = f"https://graph.facebook.com/{IG_API_VERSION}"
 
 RETRY_DELAYS = [5, 15, 45]  # 秒。指数バックオフ（最大3回リトライ = 計4回試行）
 CONTAINER_WAIT_SECONDS = 5
+# トークンの有効期限がこの日数以内に迫ったら、--refresh-token 実行時に警告通知する
+TOKEN_EXPIRY_WARN_DAYS = 10
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
 
@@ -692,6 +694,44 @@ def _post_all(slot_name, slot, images, token, ig_user_id):
 # ---------------------------------------------------------------------------
 
 
+def check_token_expiry(token):
+    """debug_token API でトークンの有効期限を確認し、期限が近ければ通知する。
+
+    expires_at が 0（無期限）または取得できない場合は何もしない。
+    このチェックの失敗自体はジョブを失敗させない（有効性チェックは別途実施済み）。
+    """
+    try:
+        resp = _do_request(
+            "GET",
+            "https://graph.facebook.com/debug_token",
+            params={"input_token": token, "access_token": token},
+        )
+        data = resp.json().get("data", {})
+    except (RequestFailure, requests.RequestException, ValueError) as e:
+        log_err(f"トークンの有効期限を確認できませんでした: {e}")
+        return
+
+    expires_at = data.get("expires_at")
+    if not expires_at:  # None または 0（= 無期限）
+        log("トークンの有効期限: 無期限、または取得できませんでした")
+        return
+
+    expiry = datetime.fromtimestamp(expires_at, JST)
+    days_left = (expiry - datetime.now(JST)).days
+    log(
+        f"トークンの有効期限: {expiry.strftime('%Y-%m-%d %H:%M')} JST"
+        f"（残り約 {days_left} 日）"
+    )
+    if days_left <= TOKEN_EXPIRY_WARN_DAYS:
+        notify(
+            f"⚠️ IG_ACCESS_TOKEN の有効期限が近づいています（残り約 {days_left} 日 / "
+            f"{expiry.strftime('%Y-%m-%d')} 失効予定）。"
+            "Meta Business Suite のシステムユーザー設定 "
+            "(https://business.facebook.com/settings/system-users) から新しいトークンを"
+            "再発行し、`gh secret set IG_ACCESS_TOKEN --body \"...\"` で更新してください。"
+        )
+
+
 def cmd_refresh_token():
     """アクセストークンの有効性を確認する。
 
@@ -724,6 +764,9 @@ def cmd_refresh_token():
         return 1
 
     log(f"アクセストークンは有効です（対象: {data.get('name', 'unknown')}）")
+
+    # 有効期限が近づいていないか確認し、近ければ通知する（自動更新はしない）
+    check_token_expiry(token)
 
     # GET /me が通っても、Instagram投稿に必要な権限（instagram_content_publish 等）が
     # 欠けていると投稿時に "API access blocked" 等で落ちる。ここで投稿系エンドポイントを
