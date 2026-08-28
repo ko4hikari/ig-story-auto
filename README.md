@@ -315,7 +315,10 @@ GitHub Actions の `on: schedule`（cron）は**ベストエフォート**で、
 
 > **二重投稿にならない理由:** `post_story.py` は投稿前に `last_post.json` を見て「今日そのスロットを投稿済みか」を確認する。GitHub内蔵cronと外部cronの両方が起動しても、実際に投稿するのは1回だけ。`last_post.json` は `closed_days.txt` と同じく workflow が自動コミットする。
 >
-> **二重起動時の待機時間の無駄を減らす仕組み:** 各 workflow の先頭（待機ステップの前）に `Skip if already posted today` ステップがあり、最新の `origin/main` の `last_post.json` を見て本日分が投稿済みなら、待機（最大20〜25分の `sleep`）と投稿ステップを丸ごとスキップする。`checkout` は起動時点のコミットしか持たないため、先行 run のコミットを取りに行くよう `git fetch` してから判定している。これにより、2回目に起動した run が無駄に20分以上 runner を占有しなくなる（Actions実行時間の節約。private リポジトリの無料枠対策にもなる）。
+> **待機・投稿をスキップする条件:** 各 workflow の先頭（待機ステップの前）に `Skip if already posted today or too late` ステップがあり、次のどちらかに当てはまると、待機（最大20〜25分の `sleep`）と投稿ステップを丸ごとスキップする。判定は最新の `origin/main` の `last_post.json` を見る（`checkout` は起動時点のコミットしか持たないため、先行 run のコミットを取りに行くよう `git fetch` してから判定する）。
+>
+> 1. **本日分が投稿済み** … 外部cronとGitHub内蔵cronの二重起動で2回目に起動した run。無駄に20分以上 runner を占有しなくなる（Actions実行時間の節約）。
+> 2. **`schedule` 起動が予定時刻から1時間以上遅れている** … GitHub内蔵cronは大幅に遅延して発火することがある（実際に12時間近く遅れて深夜に発火し投稿された例がある。2026-08-29）。その頃には手動で投稿済みのことが多いので投稿しない。手動実行（`workflow_dispatch` = 手動起動・外部cron）は意図的な起動なのでこの条件の対象外。
 
 ### 対策2: 未投稿を検知する死活監視（healthchecks.io）
 
