@@ -69,11 +69,30 @@
 - **healthchecks.io の Discord連携完了**: `Discord` integration を追加し2チェック両方に割り当て。意図的に `/fail` ping して Discord・メール両方で「DOWN」通知の配信成功を実証（その後復旧）
 - **GitHub PAT 作り直し完了**: 旧トークン（チャット露出）を新トークン（`github_pat_11BK3NVHA0zhN05j6H8O6V_...`、期限は要確認）に差し替え。cron-job.org 両ジョブの試運転で HTTP 204 を確認後、旧トークンを Revoke。旧トークンで `gh api` → `401 Bad credentials` を確認済み
 
+### ⑪ トークン再失効と遅延発火対策・本番稼働確認（2026-08-29）
+- **事故**: 8/27・8/28 の自動投稿が失敗。通知は `[promo] 投稿数上限の取得に失敗… OAuthException code:190 subcode:463 "Session has expired on 27-Aug-26 18:00 PDT"`。＝`IG_ACCESS_TOKEN` が **60日期限で失効**（⑨で更新した際「無期限」が選べず「60日間」で発行していた）。ユーザーが見た `pip config set … pypi.flatt.tech` は無関係（Takumi Guard というPyPIセキュリティproxyの案内。本プロジェクトでは未使用）
+- **対応**:
+  - システムユーザー `igstoryautobot` から新トークンを再発行（またも「60日間」）。アクセス許可は既存の5件をそのまま。`gh secret set IG_ACCESS_TOKEN --body …` で更新。「Check IG Access Token」手動実行で「有効・投稿系API正常（残り100）」を確認
+  - **次回失効: 2026-10-28 00:49 JST**（`debug_token` API で確認）
+  - `post_story.py` に `check_token_expiry()` を追加。`--refresh-token`（週次）で `debug_token` の `expires_at` を見て、**残り `TOKEN_EXPIRY_WARN_DAYS`（=10）日以内なら Discord に警告通知**（`expires_at=0`＝無期限なら通知しない）。→ 10/18頃から警告が飛ぶ想定
+  - README §9 を修正（「実質無期限で失効しない」は誤り。選んだ期限で失効する／システムユーザーページのURLを `business.facebook.com/settings/system-users` に訂正）
+- **GitHub内蔵cronの遅延発火とその対策**:
+  - 8/29 04:33 JST（`35 7 * * *` = 16:35 JST予定が **約12時間遅延**）に `Slot - open` が `schedule` で発火し、待機ステップを素通りして深夜に本番投稿された。ユーザーが手動削除
+  - 各 slot workflow 冒頭に `Skip if already posted today or too late` ステップを追加。`git fetch` で最新 `origin/main` の `last_post.json` を見て判定し、次のどちらかで待機・投稿を丸ごとスキップ:
+    1. 本日分が投稿済み（二重起動の2回目。Actions時間の節約）
+    2. `event=schedule` かつ予定時刻から1時間超の遅延（その頃には手動投稿済みのため）。`workflow_dispatch`（手動・外部cron）は対象外
+  - 深夜投稿分を手動削除して定刻分を通すため、`last_post.json` を `{}` にリセットして push
+- **テスト用ワークフロー追加**: `test-dry-run.yml`（手動実行のみ）。実Secretsで `--check` / `--dry-run` / 画像URLのHTTP200確認 / `--refresh-token` をまとめて実行。投稿は一切しない
+- **本番稼働確認（2026-08-29、⑨⑩の「未確認」がこれで確認完了）**:
+  - open 17:00:16 JST / promo 18:00〜18:01 JST に **外部cron（cron-job.org → `workflow_dispatch`）で投稿成功**。待機ステップが定刻ちょうどまで `sleep` して時刻も正確
+  - GitHub内蔵cronは今回も約5.5時間遅延して発火（22:18 / 22:58 JST）したが、新スキップ判定が「本日分は投稿済み」を検知して **待機・投稿をスキップ（二重投稿なし）**
+  - healthchecks.io も成功pingで復旧（8/28分のDOWNから「UP」通知）
+  - 補足: GitHub内蔵cronは相変わらず定刻に発火しない。実運用は **外部cron（cron-job.org）が主、内蔵cronは保険** という形で回っている
+
 ## 次にやること
 
-- **次回の自動投稿（open 17:00 JST / promo 18:00 JST）で、起動二重化・二重投稿防止・healthchecks成功pingが想定どおり動くか確認する**（初回の本番稼働）
-- `cron-job.org` の新 GitHub PAT の有効期限をカレンダーに登録して更新漏れを防ぐ
-- `IG_ACCESS_TOKEN` の60日ごとの手動更新（自動更新なし。README §9参照）
+- `IG_ACCESS_TOKEN` の再発行（**次回失効 2026-10-28**。残り10日で自動警告が飛ぶ。手順は README §9／作業メモ）
+- `cron-job.org` の GitHub PAT の有効期限（**2027-08-26**）をカレンダーに登録して更新漏れを防ぐ
 - 長期休業などで `PAUSE` フラグを使う運用が実際に機能するか、次の休業時に確認
 - 画像を追加・入れ替える際は9:16比率を保つこと（README §5参照）
 
@@ -87,3 +106,4 @@
 - 18: トークン破損時の通知（BOM混入トラブルの際に間接的に確認済み。意図的な破損テストは未実施）
 
 1〜6, 9〜11, 13, 16, 17, 19 はローカル検証・本番投稿の両方で確認済み。
+起動二重化・二重投稿防止・healthchecks成功ping・投稿時刻の正確さは 2026-08-29 の本番稼働で確認済み（⑪）。
