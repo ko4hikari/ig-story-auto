@@ -266,6 +266,8 @@ Facebookログイン方式のシステムユーザートークンには、Instag
   - `GET https://graph.facebook.com/debug_token` で `expires_at` を取得し、**残り `TOKEN_EXPIRY_WARN_DAYS`（既定10）日以内なら Discord に警告通知**する（`expires_at` が 0 = 無期限なら通知しない）
 - トークンが無効化されている／期限が近い場合は通知が飛ぶので、[Meta Business Suite のシステムユーザーページ](https://business.facebook.com/settings/system-users)から**新しいトークンを再発行**し、`gh secret set IG_ACCESS_TOKEN --body "..."` で更新する（§1の手順6〜7と同じ。アクセス許可は既に選択済みの5件をそのまま使う）
 - 再発行したら、次回の失効予定日（発行日 + 選んだ日数）を控えておくとよい
+  - 現在のトークンの失効予定: **2026-12-12 05:04 JST**（2026-10-13 に再発行。警告は 12/2 頃から届く）
+  - システムユーザー `igstoryautobot` は「株式会社なんごく」のビジネスにある。トークン生成時に「アカウントを認証」（パスキー等の本人確認）が求められる
 
 ---
 
