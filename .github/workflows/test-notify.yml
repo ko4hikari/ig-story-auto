@@ -1,0 +1,35 @@
+name: Test Notify
+
+# NOTIFY_WEBHOOK の通知先（Discord）に届くかを確認する手動専用ワークフロー。
+# 投稿は一切しない。Webhook を作り直したときなどに実行する。
+on:
+  workflow_dispatch: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send test notification
+        env:
+          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+        run: |
+          python - <<'EOF'
+          import os, sys, urllib.request, json
+          url = os.environ.get("NOTIFY_WEBHOOK")
+          if not url:
+              print("NOTIFY_WEBHOOK が未設定です")
+              sys.exit(1)
+          msg = "✅ テスト通知です（ig-story-auto / Test Notify ワークフロー）"
+          # urllib の既定User-AgentはDiscordに403で弾かれるため、明示的に指定する
+          req = urllib.request.Request(
+              url,
+              data=json.dumps({"content": msg, "text": msg}).encode(),
+              headers={"Content-Type": "application/json", "User-Agent": "ig-story-auto"},
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  print(f"HTTP {r.status}（2xx なら送信成功）")
+          except urllib.error.HTTPError as e:
+              print(f"HTTP {e.code}（送信失敗。404 ならWebhookが削除されている）")
+              sys.exit(1)
+          EOF
