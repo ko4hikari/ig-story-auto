@@ -2,9 +2,9 @@ name: Slot - promo
 
 on:
   schedule:
-    # 投稿は17:00〜18:00 JST内のランダム時刻(post_story.py が待機)。
-    # 混雑回避のため17:00の25分前、16:35 JST(07:35 UTC)に起動する。
-    - cron: "35 7 * * *"
+    # 投稿は17:30〜18:30 JST内のランダム時刻(post_story.py が待機)。
+    # 混雑回避のため17:30の25分前、17:05 JST(08:05 UTC)に起動する。
+    - cron: "5 8 * * *"
   workflow_dispatch: {}
 
 concurrency:
@@ -49,10 +49,10 @@ jobs:
             exit 0
           fi
           if [ "$EVENT_NAME" = "schedule" ]; then
-            TARGET_EPOCH=$(date -u -d "$(date -u +%Y-%m-%d) 08:00:00" +%s)
+            TARGET_EPOCH=$(date -u -d "$(date -u +%Y-%m-%d) 08:30:00" +%s)
             LATE_SEC=$(( $(date -u +%s) - TARGET_EPOCH ))
             if [ "$LATE_SEC" -gt 3600 ]; then
-              echo "予定時刻(17:00 JST)から ${LATE_SEC} 秒=1時間超 遅れているためスキップします"
+              echo "予定時刻(17:30 JST)から ${LATE_SEC} 秒=1時間超 遅れているためスキップします"
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi

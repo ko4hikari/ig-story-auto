@@ -13,11 +13,11 @@
       "name": "promo",
       "folder": "assets/promo",
       "mode": "all",
-      "time_jst": "17:00-18:00(ランダム・順番もランダム)",
+      "time_jst": "17:30-18:30(ランダム・順番もランダム)",
       "interval_seconds": 30,
       "respect_closed_days": false,
-      "window_start": "17:00",
-      "window_end": "18:00"
+      "window_start": "17:30",
+      "window_end": "18:30"
     }
   ]
 }
