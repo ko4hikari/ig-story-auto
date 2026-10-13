@@ -6,6 +6,7 @@ import csv
 import io
 import json
 import os
+import random
 import sys
 import time
 import urllib.parse
@@ -615,7 +616,7 @@ def _run_post(slots, slot_name):
     if slot["mode"] == "rotate":
         rc = _post_rotate(slot_name, slot, images, today, token, ig_user_id)
     else:
-        rc = _post_all(slot_name, slot, images, token, ig_user_id)
+        rc = _post_all(slot_name, slot, images, today, token, ig_user_id)
 
     # 完全に成功したときだけ「投稿済み」として記録する。
     # 一部失敗のときは記録せず、後続の起動でのリトライ機会を残す。
@@ -624,9 +625,46 @@ def _run_post(slots, slot_name):
     return rc
 
 
+def _window_bounds(slot, today):
+    """スロットの投稿時間帯 (window_start〜window_end, JST) を datetime で返す。未設定なら None。"""
+    ws, we = slot.get("window_start"), slot.get("window_end")
+    if not ws or not we:
+        return None
+    def at(hhmm):
+        h, m = map(int, hhmm.split(":"))
+        return datetime(today.year, today.month, today.day, h, m, tzinfo=JST)
+    return at(ws), at(we)
+
+
+def _random_times(slot, today, count):
+    """時間帯内のランダムな投稿時刻を count 個、昇順で返す。時間帯未設定なら None。
+
+    すでに時間帯の途中なら「いま〜終了」から選ぶ。終了を過ぎていれば全件「いま」とする。
+    """
+    bounds = _window_bounds(slot, today)
+    if bounds is None:
+        return None
+    start, end = bounds
+    now = datetime.now(JST)
+    start = max(start, now)
+    span = max(0, int((end - start).total_seconds()))
+    return sorted(start + timedelta(seconds=random.randint(0, span)) for _ in range(count))
+
+
+def _wait_until(target, label):
+    """target (JST) まで待機する。過ぎていれば即座に戻る。"""
+    sec = (target - datetime.now(JST)).total_seconds()
+    if sec > 0:
+        log(f"[{label}] {target.strftime('%H:%M:%S')} JST まで {int(sec)} 秒待機します")
+        time.sleep(sec)
+
+
 def _post_rotate(slot_name, slot, images, today, token, ig_user_id):
     fn = select_rotate_image(images, today)
     url = build_image_url(slot["folder"], fn)
+    times = _random_times(slot, today, 1)
+    if times:
+        _wait_until(times[0], slot_name)
     ok, status, body = post_one_image(token, ig_user_id, url)
     if not ok:
         notify(f"[{slot_name}] 投稿失敗: {fn} status={status} body={body}")
@@ -635,7 +673,7 @@ def _post_rotate(slot_name, slot, images, today, token, ig_user_id):
     return 0
 
 
-def _post_all(slot_name, slot, images, token, ig_user_id):
+def _post_all(slot_name, slot, images, today, token, ig_user_id):
     interval = slot.get("interval_seconds", 30)
 
     try:
@@ -660,9 +698,18 @@ def _post_all(slot_name, slot, images, token, ig_user_id):
     to_post = images[:remaining]
     skipped = images[remaining:]
 
+    # 時間帯指定があれば、投稿順をシャッフルし、各画像を時間帯内のランダム時刻に投稿する
+    times = _random_times(slot, today, len(to_post))
+    if times:
+        to_post = random.sample(to_post, len(to_post))
+        log(f"[{slot_name}] 投稿予定: " + ", ".join(
+            f"{t.strftime('%H:%M:%S')}={fn}" for t, fn in zip(times, to_post)))
+
     successes = []
     failures = []  # (filename, status, body)
     for i, fn in enumerate(to_post):
+        if times:
+            _wait_until(times[i], slot_name)
         url = build_image_url(slot["folder"], fn)
         ok, status, body = post_one_image(token, ig_user_id, url)
         if ok:
@@ -671,7 +718,7 @@ def _post_all(slot_name, slot, images, token, ig_user_id):
         else:
             failures.append((fn, status, body))
             log_err(f"[{slot_name}] 投稿失敗: {fn} status={status}")
-        if i < len(to_post) - 1:
+        if i < len(to_post) - 1 and not times:
             time.sleep(interval)
 
     if failures or skipped:

@@ -2,10 +2,9 @@ name: Slot - promo
 
 on:
   schedule:
-    # 実際の投稿目標は18:00 JST(09:00 UTC)。
-    # ちょうど毎時0分はGitHub Actions全体で混雑し実行が遅延しやすいため、
-    # 22分早い17:38 JST(08:38 UTC)に起動し、後続の待機ステップで正確な時刻まで調整する。
-    - cron: "38 8 * * *"
+    # 投稿は17:00〜18:00 JST内のランダム時刻(post_story.py が待機)。
+    # 混雑回避のため17:00の25分前、16:35 JST(07:35 UTC)に起動する。
+    - cron: "35 7 * * *"
   workflow_dispatch: {}
 
 concurrency:
@@ -25,7 +24,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      # 起動時に、この後の待機(最大22分)と投稿をスキップすべきか判定する。
+      # 起動時に、この後の待機(最大25分)と投稿をスキップすべきか判定する。
       #  (a) 本日分が既に投稿済み       … 外部cron + GitHub内蔵cron の二重起動対策
       #  (b) schedule起動が予定時刻から1時間以上遅れている
       #      … GitHub内蔵cronは大幅に遅延して発火することがあり、その頃には
@@ -50,10 +49,10 @@ jobs:
             exit 0
           fi
           if [ "$EVENT_NAME" = "schedule" ]; then
-            TARGET_EPOCH=$(date -u -d "$(date -u +%Y-%m-%d) 09:00:00" +%s)
+            TARGET_EPOCH=$(date -u -d "$(date -u +%Y-%m-%d) 08:00:00" +%s)
             LATE_SEC=$(( $(date -u +%s) - TARGET_EPOCH ))
             if [ "$LATE_SEC" -gt 3600 ]; then
-              echo "予定時刻(18:00 JST)から ${LATE_SEC} 秒=1時間超 遅れているためスキップします"
+              echo "予定時刻(17:00 JST)から ${LATE_SEC} 秒=1時間超 遅れているためスキップします"
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -63,19 +62,6 @@ jobs:
       - name: Install dependencies
         if: steps.dedup.outputs.skip != 'true'
         run: pip install requests
-
-      - name: Wait until 18:00 JST (09:00 UTC)
-        if: steps.dedup.outputs.skip != 'true'
-        run: |
-          TARGET_EPOCH=$(date -u -d "$(date -u +%Y-%m-%d) 09:00:00" +%s)
-          NOW_EPOCH=$(date -u +%s)
-          SLEEP_SEC=$((TARGET_EPOCH - NOW_EPOCH))
-          if [ "$SLEEP_SEC" -gt 0 ]; then
-            echo "投稿予定時刻まで ${SLEEP_SEC} 秒待機します"
-            sleep "$SLEEP_SEC"
-          else
-            echo "既に予定時刻を過ぎているため、待機せず投稿します"
-          fi
 
       - name: Post story (promo)
         if: steps.dedup.outputs.skip != 'true'
