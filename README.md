@@ -11,7 +11,7 @@ repo/
 │   └── refresh-token.yml    # 週1回、アクセストークンの有効性を確認（自動更新はしない）
 ├── assets/
 │   ├── open/                # open スロットの画像（本番画像8枚）
-│   └── promo/                # promo スロットの画像（本番画像2枚）
+│   └── promo/                # promo スロットの画像（本番画像3枚）
 ├── config.json               # スロット定義
 ├── closed_days.txt           # 休業日キャッシュ（自動更新・手で編集しない）
 ├── post_story.py
