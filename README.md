@@ -6,8 +6,8 @@
 ```
 repo/
 ├── .github/workflows/
-│   ├── slot-open.yml        # open スロット（19:00〜19:30 JSTに投稿）
-│   ├── slot-promo.yml       # promo スロット（19:30〜20:30 JSTに投稿）
+│   ├── slot-open.yml        # open スロット（18:30〜19:00 JSTに投稿）
+│   ├── slot-promo.yml       # promo スロット（19:00〜19:30 JSTに投稿）
 │   └── refresh-token.yml    # 週1回、アクセストークンの有効性を確認（自動更新はしない）
 ├── assets/
 │   ├── open/                # open スロットの画像（本番画像8枚）
@@ -105,14 +105,14 @@ gh secret set HEALTHCHECK_URL_PROMO --body "https://hc-ping.com/yyyyyyyy-yyyy-yy
       "name": "open",
       "folder": "assets/open",
       "mode": "rotate",
-      "time_jst": "19:00",
+      "time_jst": "18:30",
       "respect_closed_days": true
     },
     {
       "name": "promo",
       "folder": "assets/promo",
       "mode": "all",
-      "time_jst": "19:30",
+      "time_jst": "19:00",
       "interval_seconds": 30,
       "respect_closed_days": false
     }
@@ -275,11 +275,11 @@ Facebookログイン方式のシステムユーザートークンには、Instag
 
 - GitHub Actions の cron は UTC。「今日」の判定は必ず JST (`Asia/Tokyo`) で行う（`datetime.now()` をそのまま使わない設計にしている）
 - **毎時ちょうど（`:00`）は GitHub Actions 全体で混雑し、scheduled workflow が数分〜30分程度遅延することがある**（実際に発生した）。対策として、各 workflow は次の2段構えにしている
-  1. cron のトリガー自体は目標時刻より20〜25分早い、かつ`:00`を避けた分（例: `35 9 * * *` = 18:35 JST）に設定し、混雑を避ける
-  2. 起動後、「Wait until 〜」ステップで `date`/`sleep` を使い、UTCの目標時刻（例: 10:00 UTC = 19:00 JST）ちょうどまで待機してから投稿する
+  1. cron のトリガー自体は目標時刻より20〜25分早い、かつ`:00`を避けた分（例: `5 9 * * *` = 18:05 JST）に設定し、混雑を避ける
+  2. 起動後、「Wait until 〜」ステップで `date`/`sleep` を使い、UTCの目標時刻（例: 09:30 UTC = 18:30 JST）ちょうどまで待機してから投稿する
   - この仕組みにより、cronの起動自体が多少遅れても、投稿時刻はほぼ正確に揃う（起動遅延が20分超のバッファを超えた場合のみズレが残る）
   - 新しいスロットを追加する際も、cronは目標時刻の20分以上前・`:00`以外の分に設定し、同様の待機ステップを入れること
-  - 対応表: 19:00 JST → cron `35 9 * * *` + 基準時刻 `10:00:00` UTC / 19:30 JST → cron `5 10 * * *` + 基準時刻 `10:30:00` UTC
+  - 対応表: 18:30 JST → cron `5 9 * * *` + 基準時刻 `09:30:00` UTC / 19:00 JST → cron `35 9 * * *` + 基準時刻 `10:00:00` UTC
 - workflow はスロットごとに1ファイル（`slot-open.yml`, `slot-promo.yml`, ...）。まとめず分けているのは事故を防ぐため。各ファイルに `workflow_dispatch` を入れて手動実行できるようにしている
 
 ---
@@ -312,7 +312,7 @@ GitHub Actions の `on: schedule`（cron）は**ベストエフォート**で、
      - `Authorization: Bearer <発行したPAT>`
      - `X-GitHub-Api-Version: 2022-11-28`
    - Request body: `{"ref":"main"}`
-   - Schedule: open = 毎日 18:50、promo = 毎日 19:20（目標時刻の10分前。あとは workflow の待機ステップが正確な時刻まで調整する）
+   - Schedule: open = 毎日 18:20、promo = 毎日 18:50（目標時刻の10分前。あとは workflow の待機ステップが正確な時刻まで調整する）
 4. cron-job.org の「Notifications」で、リクエスト失敗時にメール通知するよう設定しておく
 
 > **二重投稿にならない理由:** `post_story.py` は投稿前に `last_post.json` を見て「今日そのスロットを投稿済みか」を確認する。GitHub内蔵cronと外部cronの両方が起動しても、実際に投稿するのは1回だけ。`last_post.json` は `closed_days.txt` と同じく workflow が自動コミットする。
@@ -330,8 +330,8 @@ GitHub Actions の `on: schedule`（cron）は**ベストエフォート**で、
 
 1. healthchecks.io に登録し、チェックを2つ作る（`ig-story-open` / `ig-story-promo`）
 2. 各チェックのスケジュールを設定
-   - open: Cron `30 18 * * *`、Timezone `Asia/Tokyo`、Grace Time `75 min`（19:45までに ping が無ければ通知）
-   - promo: Cron `0 19 * * *`、Timezone `Asia/Tokyo`、Grace Time `105 min`（20:45までに ping が無ければ通知）
+   - open: Cron `0 18 * * *`、Timezone `Asia/Tokyo`、Grace Time `75 min`（19:15までに ping が無ければ通知）
+   - promo: Cron `30 18 * * *`、Timezone `Asia/Tokyo`、Grace Time `75 min`（19:45までに ping が無ければ通知）
 3. `Integrations` → `Discord` を追加し、通知先チャンネルの Webhook を連携する（`NOTIFY_WEBHOOK` と同じでよい）
 4. 各チェックの ping URL（`https://hc-ping.com/<UUID>`）を GitHub Secrets に登録する
    - `gh secret set HEALTHCHECK_URL_OPEN --body "https://hc-ping.com/xxxx..."`
